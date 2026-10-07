@@ -1,0 +1,6 @@
+{
+  "name": "Mithas Sweets - Royal Confectionery & Mithai Shop",
+  "description": "Authentic premium handcrafted sweets, pure desi ghee mithai, custom event gifting, live order tracking, and shop management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
