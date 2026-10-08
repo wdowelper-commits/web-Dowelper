@@ -1,28 +1,28 @@
 import React, { useState } from 'react';
-import { ShoppingBag, Sparkles, ShieldCheck, Menu as MenuIcon, X } from 'lucide-react';
+import { ShoppingBag, ShieldCheck, Menu as MenuIcon, X, Globe, User, Search } from 'lucide-react';
 import { ShopSettings } from '../types';
+import { useCart } from '../context/CartContext';
+import { useLanguage } from '../context/LanguageContext';
 
 interface NavbarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
-  cartCount: number;
-  openCart: () => void;
-  openAiConcierge: () => void;
   openAdmin: () => void;
   openOrderTracker: () => void;
+  openCustomerAuth: () => void;
   settings?: ShopSettings;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
-  cartCount,
-  openCart,
-  openAiConcierge,
   openAdmin,
   openOrderTracker,
+  openCustomerAuth,
   settings
 }) => {
+  const { cartCount, openCart } = useCart();
+  const { language, setLanguage, isUrdu, t } = useLanguage();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const shopName = settings?.shop_name || 'Mithas Sweets';
@@ -31,11 +31,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   const whatsapp = settings?.whatsapp || '923027628552';
 
   const navLinks = [
-    { id: 'home', label: 'Home' },
-    { id: 'menu', label: 'Menu & Sweets' },
-    { id: 'events', label: 'Bulk & Events' },
-    { id: 'about', label: 'About Us' },
-    { id: 'contact', label: 'Contact Us' },
+    { id: 'home', label: t('nav.home', 'Home', 'ہوم') },
+    { id: 'menu', label: t('nav.menu', 'Menu & Sweets', 'مٹھائیاں اور مینو') },
+    { id: 'gift_boxes', label: t('nav.gift_boxes', 'Custom Gift Boxes', 'شاہی تحفہ ڈبے') },
+    { id: 'events', label: t('nav.events', 'Bulk & Events', 'شادی و تقریبات') },
+    { id: 'about', label: t('nav.about', 'About Us', 'ہمارے بارے میں') },
+    { id: 'contact', label: t('nav.contact', 'Contact Us', 'رابطہ کریں') },
   ];
 
   const handleNavClick = (id: string) => {
@@ -44,38 +45,52 @@ export const Navbar: React.FC<NavbarProps> = ({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const toggleLanguage = () => {
+    setLanguage(language === 'en' ? 'ur' : 'en');
+  };
+
   return (
     <header className="sticky top-0 z-40 bg-[#FAF7F2]/95 backdrop-blur-md border-b border-[#EAE2D5] transition-colors">
-      {/* Top micro announcement bar - dynamic from settings */}
+      {/* Top announcement bar */}
       <div className="bg-[#2A170A] text-[#F5EBE1] text-xs py-1.5 px-4 text-center">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <span className="hidden sm:inline text-amber-200/90 font-medium">
-            Fresh Handcrafted Sweets Delivered To Your Doorstep
+            {t('bar.announcement', 'Fresh Handcrafted Sweets Delivered To Your Doorstep')}
           </span>
           <span className="mx-auto sm:mx-0">
-            Free Delivery on orders above Rs. {freeThreshold.toLocaleString()} · WhatsApp: {whatsapp}
+            {t('bar.free_delivery', 'Free Delivery above')} Rs. {freeThreshold.toLocaleString()} · WhatsApp: {whatsapp}
           </span>
-          <div className="hidden md:flex items-center gap-4 text-amber-200/80">
+          <div className="hidden md:flex items-center gap-3 text-amber-200/80">
+            {/* Language Switch */}
+            <button
+              onClick={toggleLanguage}
+              className="px-2 py-0.5 rounded bg-amber-950/60 hover:bg-amber-900 text-amber-300 font-semibold text-[11px] flex items-center gap-1 transition-colors cursor-pointer border border-amber-800"
+            >
+              <Globe className="w-3 h-3" />
+              <span>{language === 'en' ? 'اردو (Urdu)' : 'English'}</span>
+            </button>
+
+            <span>·</span>
             <button
               onClick={openOrderTracker}
               className="hover:text-amber-100 hover:underline transition-colors cursor-pointer"
             >
-              Track Order
+              {t('nav.track', 'Track Order')}
             </button>
             <span>·</span>
             <button
               onClick={openAdmin}
               className="hover:text-amber-100 hover:underline transition-colors cursor-pointer"
             >
-              Admin Portal
+              {t('nav.admin', 'Admin Portal')}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Main Top Bar Contract */}
+      {/* Main Bar */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
-        {/* Zone 1: Brand Wordmark (Configured from Settings) */}
+        {/* Brand Wordmark */}
         <button
           onClick={() => handleNavClick('home')}
           className="text-left group flex flex-col justify-center cursor-pointer"
@@ -88,8 +103,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           </span>
         </button>
 
-        {/* Zone 2: Navigation Links */}
-        <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-[#5A4132]">
+        {/* Navigation Links */}
+        <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-[#5A4132]">
           {navLinks.map((link) => (
             <button
               key={link.id}
@@ -105,80 +120,91 @@ export const Navbar: React.FC<NavbarProps> = ({
           ))}
         </nav>
 
-        {/* Zone 3: Primary Actions */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          {/* AI Sweet Concierge */}
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Mobile Language Switch */}
           <button
-            onClick={openAiConcierge}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#854D0E] bg-[#FEF3C7] hover:bg-[#FDE68A] border border-[#FCD34D] rounded-lg transition-all shadow-xs cursor-pointer whitespace-nowrap"
-            title="Calculate sweet portions for weddings or celebrations"
+            onClick={toggleLanguage}
+            className="md:hidden p-2 rounded-xl text-[#2A170A] hover:bg-[#EAE2D5] text-xs font-bold"
+            title="Switch Language"
           >
-            <Sparkles className="w-3.5 h-3.5 text-[#D97706]" />
-            <span className="hidden sm:inline">AI Sweet Sommelier</span>
-            <span className="sm:hidden">AI Box</span>
+            {language === 'en' ? 'اردو' : 'EN'}
           </button>
 
-          {/* Cart Button */}
+
+          {/* Customer Profile / Sign In */}
+          <button
+            onClick={openCustomerAuth}
+            className="p-2.5 rounded-xl text-[#2A170A] hover:bg-[#EAE2D5] transition-colors cursor-pointer border border-[#D9C8B4]/60"
+            title="Customer Account & Orders"
+          >
+            <User className="w-4 h-4" />
+          </button>
+
+          {/* Cart Trigger */}
           <button
             onClick={openCart}
-            aria-label={`View shopping cart, ${cartCount} items`}
-            className="relative flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-medium text-white bg-[#C2410C] hover:bg-[#9A3412] active:scale-95 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap"
+            className="relative px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-[#2A170A] hover:bg-[#C2410C] text-white text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-md active:scale-98"
           >
             <ShoppingBag className="w-4 h-4" />
-            <span className="hidden sm:inline">Cart</span>
+            <span className="hidden sm:inline">{t('nav.cart', 'Cart')}</span>
             {cartCount > 0 && (
-              <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold bg-[#FAF7F2] text-[#9A3412] rounded-full tabular-nums">
+              <span className="px-1.5 py-0.2 rounded-full bg-[#C2410C] text-white text-[10px] font-bold ring-2 ring-[#2A170A]">
                 {cartCount}
               </span>
             )}
           </button>
 
-          {/* Mobile hamburger menu */}
+          {/* Mobile hamburger */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 text-[#2A170A] hover:bg-[#EAE2D5] rounded-lg transition-colors cursor-pointer"
-            aria-label="Toggle navigation menu"
+            className="lg:hidden p-2 rounded-xl text-[#2A170A] hover:bg-[#EAE2D5] transition-colors"
           >
             {mobileMenuOpen ? <X className="w-6 h-6" /> : <MenuIcon className="w-6 h-6" />}
           </button>
         </div>
       </div>
 
-      {/* Mobile Drawer Menu */}
+      {/* Mobile Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-t border-[#EAE2D5] bg-[#FAF7F2] px-4 pt-3 pb-6 space-y-2 animate-in slide-in-from-top">
-          {navLinks.map((link) => (
-            <button
-              key={link.id}
-              onClick={() => handleNavClick(link.id)}
-              className={`block w-full text-left px-3 py-2.5 rounded-lg text-base font-medium transition-colors ${
-                activeTab === link.id
-                  ? 'bg-[#EAE2D5] text-[#C2410C] font-semibold'
-                  : 'text-[#4A3223] hover:bg-[#F2ECE1]'
-              }`}
-            >
-              {link.label}
-            </button>
-          ))}
-          <div className="pt-3 border-t border-[#EAE2D5] flex items-center justify-between text-xs text-[#6B5544] px-1">
+        <div className="lg:hidden bg-[#FAF7F2] border-b border-[#EAE2D5] px-4 pt-2 pb-6 space-y-3">
+          <div className="flex flex-col space-y-1">
+            {navLinks.map((link) => (
+              <button
+                key={link.id}
+                onClick={() => handleNavClick(link.id)}
+                className={`text-left px-3 py-2 rounded-xl text-sm font-semibold ${
+                  activeTab === link.id
+                    ? 'bg-[#C2410C] text-white'
+                    : 'text-[#2A170A] hover:bg-[#EAE2D5]'
+                }`}
+              >
+                {link.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="pt-3 border-t border-[#EAE2D5] flex flex-col gap-2">
             <button
               onClick={() => {
                 setMobileMenuOpen(false);
                 openOrderTracker();
               }}
-              className="py-1 hover:text-[#C2410C]"
+              className="w-full text-left px-3 py-2 text-xs font-semibold text-[#5A4132] hover:bg-[#EAE2D5] rounded-xl flex items-center gap-2"
             >
-              Track Existing Order
+              <Search className="w-4 h-4 text-[#C2410C]" />
+              <span>{t('nav.track', 'Track Existing Order')}</span>
             </button>
+
             <button
               onClick={() => {
                 setMobileMenuOpen(false);
                 openAdmin();
               }}
-              className="py-1 hover:text-[#C2410C] flex items-center gap-1"
+              className="w-full text-left px-3 py-2 text-xs font-semibold text-[#5A4132] hover:bg-[#EAE2D5] rounded-xl flex items-center gap-2"
             >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Owner Admin
+              <ShieldCheck className="w-4 h-4 text-[#C2410C]" />
+              <span>{t('nav.admin', 'Admin Management Portal')}</span>
             </button>
           </div>
         </div>

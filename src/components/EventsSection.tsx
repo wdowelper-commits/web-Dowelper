@@ -105,12 +105,16 @@ export const EventsSection: React.FC<EventsSectionProps> = ({
           {/* Card 1: Wedding & Baraat */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E8DFC9] shadow-sm hover:shadow-md transition-shadow space-y-5 flex flex-col justify-between">
             <div className="space-y-4">
-              <div className="h-48 rounded-2xl overflow-hidden bg-[#FAF7F2] border border-[#D9C8B4]">
+              <div className="relative w-full h-48 rounded-xl overflow-hidden bg-[#FFF8EE]">
                 <img
-                  src="/src/assets/images/mithas_luxury_box_1791385642526.jpg"
-                  alt="Wedding sweet box packaging"
+                  src="https://images.unsplash.com/photo-1565538810643-b5bdb714032a?w=600&q=80"
+                  alt="Baraat & Walima Bid"
                   className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    target.onerror = null;
+                    target.src = 'https://picsum.photos/seed/' + Math.random().toString(36).substring(2, 8) + '/400/400';
+                  }}
                 />
               </div>
 
@@ -164,12 +168,16 @@ export const EventsSection: React.FC<EventsSectionProps> = ({
             </div>
 
             <div className="space-y-4">
-              <div className="h-48 rounded-2xl overflow-hidden bg-[#FAF7F2] border border-[#D9C8B4]">
+              <div className="relative w-full h-48 rounded-xl overflow-hidden bg-[#FFF8EE]">
                 <img
-                  src="/src/assets/images/mithas_barfi_assortment_1791385657557.jpg"
-                  alt="Eid festive sweet hamper"
+                  src="https://images.unsplash.com/photo-1599599810769-bcde5a160d32?w=600&q=80"
+                  alt="Eid Mubarak Celebrations"
                   className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    target.onerror = null;
+                    target.src = 'https://picsum.photos/seed/' + Math.random().toString(36).substring(2, 8) + '/400/400';
+                  }}
                 />
               </div>
 
@@ -219,12 +227,16 @@ export const EventsSection: React.FC<EventsSectionProps> = ({
           {/* Card 3: Corporate Executive */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E8DFC9] shadow-sm hover:shadow-md transition-shadow space-y-5 flex flex-col justify-between">
             <div className="space-y-4">
-              <div className="h-48 rounded-2xl overflow-hidden bg-[#FAF7F2] border border-[#D9C8B4]">
+              <div className="relative w-full h-48 rounded-xl overflow-hidden bg-[#FFF8EE]">
                 <img
-                  src="/src/assets/images/mithas_halwa_laddu_1791385679890.jpg"
-                  alt="Corporate gifting sweets"
+                  src="https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=600&q=80"
+                  alt="Corporate Executive Gifting"
                   className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    target.onerror = null;
+                    target.src = 'https://picsum.photos/seed/' + Math.random().toString(36).substring(2, 8) + '/400/400';
+                  }}
                 />
               </div>
 

@@ -25,6 +25,13 @@ h1, h2, h3, .font-serif-heading {
   font-family: var(--font-serif);
 }
 
+/* Urdu Typography & RTL layout enhancements */
+[dir="rtl"], .font-urdu {
+  font-family: "Noto Nastaliq Urdu", "Jameel Noori Nastaliq", "Urdu Typesetting", "Arabic Typesetting", "Segoe UI", system-ui, sans-serif;
+  letter-spacing: 0;
+  line-height: 1.8;
+}
+
 /* Custom smooth scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
@@ -39,4 +46,9 @@ h1, h2, h3, .font-serif-heading {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #B39982;
+}
+
+/* Fallback inline placeholder rule when image fails to load */
+.show-placeholder .placeholder-fallback {
+  display: flex !important;
 }

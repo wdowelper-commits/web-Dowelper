@@ -1,18 +1,16 @@
 import React from 'react';
-import { ArrowRight, Sparkles, CheckCircle2, Truck, Gift, Clock } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Truck, Gift, Clock } from 'lucide-react';
 import { ShopSettings } from '../types';
 
 interface HeroProps {
   onExploreMenu: () => void;
   onBulkOrders: () => void;
-  onOpenAiPlanner: () => void;
   settings?: ShopSettings;
 }
 
 export const Hero: React.FC<HeroProps> = ({
   onExploreMenu,
   onBulkOrders,
-  onOpenAiPlanner,
   settings
 }) => {
   const shopName = settings?.shop_name || 'Mithas Sweets';
@@ -58,14 +56,6 @@ export const Hero: React.FC<HeroProps> = ({
               >
                 Wedding & Bulk Boxes
               </button>
-
-              <button
-                onClick={onOpenAiPlanner}
-                className="px-4 py-3.5 text-xs font-semibold text-[#854D0E] bg-[#FEF3C7] hover:bg-[#FDE68A] border border-[#FCD34D] rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4 text-[#D97706]" />
-                <span>Portion Calculator</span>
-              </button>
             </div>
 
             {/* Clean Service Highlights (Without fabricated claims) */}
@@ -92,16 +82,24 @@ export const Hero: React.FC<HeroProps> = ({
           {/* Right Column: Hero High-Res Imagery */}
           <div className="lg:col-span-5">
             <div className="relative rounded-2xl overflow-hidden shadow-xl border border-[#D9C8B4] bg-[#2A170A]/5 group">
-              <img
-                src="/src/assets/images/mithas_hero_spread_1791385618514.jpg"
-                alt="Traditional sweets assortment"
-                className="w-full h-80 sm:h-96 lg:h-[460px] object-cover object-center group-hover:scale-102 transition-transform duration-700"
-                referrerPolicy="no-referrer"
-              />
+              <div className="relative w-full h-48 sm:h-64 lg:h-72 overflow-hidden bg-[#FFF8EE]">
+                <img
+                  src="https://images.unsplash.com/photo-1574085733277-851d9d856a3a?w=1920&q=80"
+                  alt="Traditional Sweets Collection"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (target.src.includes('photo-1574085733277-851d9d856a3a')) {
+                      target.src = 'https://images.unsplash.com/photo-1606914501449-5a96b6ce24ca?w=1920&q=80';
+                    } else {
+                      target.onerror = null;
+                      target.src = 'https://picsum.photos/seed/' + Math.random().toString(36).substring(2, 8) + '/400/400';
+                    }
+                  }}
+                />
+              </div>
               
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-              
-              <div className="absolute bottom-4 left-4 right-4 p-4 bg-[#FAF7F2]/95 backdrop-blur-md rounded-xl border border-[#EAE2D5] text-[#2A170A] shadow-md">
+              <div className="p-4 bg-[#FAF7F2]/95 backdrop-blur-md rounded-b-xl border-t border-[#EAE2D5] text-[#2A170A]">
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="text-[11px] uppercase tracking-wider text-[#C2410C] font-bold">

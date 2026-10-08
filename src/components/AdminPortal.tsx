@@ -3,10 +3,24 @@ import {
   X, Lock, ShieldCheck, Plus, Edit, Trash2, CheckCircle2, Clock, 
   Truck, AlertCircle, RefreshCw, DollarSign, Package, Users, Settings, 
   MessageSquare, Upload, Image as ImageIcon, Loader2, Database, Mail,
-  Star, Copy, Check, ExternalLink, Sparkles, FileText
+  Star, Copy, Check, ExternalLink, Sparkles, FileText, ChefHat, Volume2,
+  Calendar, Eye, Printer, Award, ArrowUpRight, ShoppingBag, Search, Filter, LogOut
 } from 'lucide-react';
-import { Product, Order, EventInquiry, ContactMessage, ShopSettings, Review } from '../types';
+import { 
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, 
+  CartesianGrid, Legend 
+} from 'recharts';
+import { Product, Order, EventInquiry, ContactMessage, ShopSettings, Review, GiftBox, Coupon } from '../types';
 import { api } from '../services/api';
+import { supabase } from '../services/supabase';
+
+// Subcomponents
+import { OrderDetailModal } from './admin/OrderDetailModal';
+import { ProductFormModal } from './admin/ProductFormModal';
+import { InquiryDetailModal } from './admin/InquiryDetailModal';
+import { MessageDetailModal } from './admin/MessageDetailModal';
+import { KitchenView } from './admin/KitchenView';
+import { SettingsTab } from './admin/SettingsTab';
 
 interface AdminPortalProps {
   isOpen: boolean;
@@ -17,112 +31,6 @@ interface AdminPortalProps {
   onRefreshSettings: () => void;
 }
 
-const SUPABASE_SCHEMA_SQL = `-- ====================================================================
--- MITHAS SWEETS - SUPABASE SCHEMA SETUP SCRIPT
--- Run this in your Supabase SQL Editor (https://supabase.com/dashboard)
--- ====================================================================
-
--- 1. Products Table (Mithai Catalog)
-CREATE TABLE IF NOT EXISTS public.products (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  category TEXT NOT NULL,
-  price_per_unit NUMERIC NOT NULL,
-  unit TEXT NOT NULL,
-  description TEXT,
-  image TEXT NOT NULL,
-  is_featured BOOLEAN DEFAULT FALSE,
-  in_stock BOOLEAN DEFAULT TRUE,
-  ingredients TEXT,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
--- 2. Orders Table (Customer Orders)
-CREATE TABLE IF NOT EXISTS public.orders (
-  id TEXT PRIMARY KEY,
-  order_number TEXT UNIQUE NOT NULL,
-  customer_name TEXT NOT NULL,
-  customer_phone TEXT NOT NULL,
-  customer_email TEXT,
-  delivery_type TEXT NOT NULL,
-  delivery_address TEXT,
-  delivery_city TEXT,
-  pickup_time TEXT,
-  special_notes TEXT,
-  items JSONB NOT NULL,
-  subtotal NUMERIC NOT NULL,
-  delivery_fee NUMERIC NOT NULL,
-  total NUMERIC NOT NULL,
-  payment_method TEXT NOT NULL,
-  status TEXT DEFAULT 'New' NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
--- 3. Event Inquiries Table (Bulk Gifting & Orders)
-CREATE TABLE IF NOT EXISTS public.event_inquiries (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  phone TEXT NOT NULL,
-  email TEXT,
-  event_type TEXT NOT NULL,
-  event_date TEXT NOT NULL,
-  estimated_boxes INTEGER NOT NULL,
-  budget_range TEXT,
-  custom_requirements TEXT,
-  status TEXT DEFAULT 'New' NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
--- 4. Contact Messages Table (Customer Queries)
-CREATE TABLE IF NOT EXISTS public.contact_messages (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  phone TEXT NOT NULL,
-  email TEXT,
-  subject TEXT NOT NULL,
-  message TEXT NOT NULL,
-  status TEXT DEFAULT 'Unread' NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
--- 5. Customer Reviews Table (Only real reviews submitted through site)
-CREATE TABLE IF NOT EXISTS public.reviews (
-  id TEXT PRIMARY KEY,
-  customer_name TEXT NOT NULL,
-  city TEXT,
-  rating INTEGER DEFAULT 5 NOT NULL,
-  comment TEXT NOT NULL,
-  is_approved BOOLEAN DEFAULT FALSE NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
-);
-
--- 6. Settings Table (Shop Configuration & Accounts)
-CREATE TABLE IF NOT EXISTS public.settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-
--- 7. Enable Row Level Security (RLS)
-ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.event_inquiries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.contact_messages ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.reviews ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Allow public read access to products" ON public.products FOR SELECT USING (true);
-CREATE POLICY "Allow public read access to settings" ON public.settings FOR SELECT USING (true);
-CREATE POLICY "Allow public read access to approved reviews" ON public.reviews FOR SELECT USING (is_approved = true);
-
--- 8. Sweets Images Storage Bucket
-INSERT INTO storage.buckets (id, name, public) 
-VALUES ('sweets-images', 'sweets-images', true)
-ON CONFLICT (id) DO NOTHING;
-
-CREATE POLICY "Public Access for sweets-images" 
-ON storage.objects FOR SELECT 
-USING (bucket_id = 'sweets-images');`;
-
 export const AdminPortal: React.FC<AdminPortalProps> = ({
   isOpen,
   onClose,
@@ -131,1790 +39,1507 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   settings,
   onRefreshSettings
 }) => {
-  if (!isOpen) return null;
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  const [token, setToken] = useState<string | null>(localStorage.getItem('mithas_admin_token'));
-  const [adminEmail, setAdminEmail] = useState<string>(localStorage.getItem('mithas_admin_email') || '');
-  const [emailInput, setEmailInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [loginLoading, setLoginLoading] = useState(false);
-  const [supabaseStatus, setSupabaseStatus] = useState<{ supabaseConfigured: boolean; defaultEmail: string } | null>(null);
-
-  // Active admin tab
-  const [activeAdminTab, setActiveAdminTab] = useState<'orders' | 'products' | 'inquiries' | 'messages' | 'reviews' | 'settings' | 'database'>('orders');
+  // Active Tab
+  const [activeTab, setActiveTab] = useState<
+    'dashboard' | 'kitchen' | 'orders' | 'products' | 'gift_boxes' | 'coupons' | 'reviews' | 'inquiries' | 'messages' | 'settings' | 'sql'
+  >('dashboard');
 
   // Data states
   const [orders, setOrders] = useState<Order[]>([]);
   const [inquiries, setInquiries] = useState<EventInquiry[]>([]);
   const [messages, setMessages] = useState<ContactMessage[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [giftBoxes, setGiftBoxes] = useState<GiftBox[]>([]);
   const [loadingData, setLoadingData] = useState(false);
 
-  // Product Add / Edit Modal State
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  // Sound chime reference & realtime
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Modals state
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const [uploadSuccess, setUploadSuccess] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectedInquiry, setSelectedInquiry] = useState<EventInquiry | null>(null);
+  const [selectedMessage, setSelectedMessage] = useState<ContactMessage | null>(null);
 
-  const [productForm, setProductForm] = useState({
-    name: '',
-    category: 'Barfi',
-    price_per_unit: 1800,
-    unit: 'kg',
-    description: '',
-    image: '/src/assets/images/mithas_barfi_assortment_1791385657557.jpg',
-    is_featured: false,
-    in_stock: true,
-    ingredients: ''
-  });
+  // Stock quick adjustment state
+  const [stockAdjustId, setStockAdjustId] = useState<string | null>(null);
+  const [stockDelta, setStockDelta] = useState<number>(500);
+  const [stockReason, setStockReason] = useState<string>('Restock');
 
-  // Bulk Product Import Modal
-  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
-  const [bulkInputText, setBulkInputText] = useState('');
-  const [bulkLoading, setBulkLoading] = useState(false);
-  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
+  // Orders Filters
+  const [orderFilterStatus, setOrderFilterStatus] = useState<string>('All');
+  const [orderFilterPayment, setOrderFilterPayment] = useState<string>('All');
+  const [orderSearch, setOrderSearch] = useState<string>('');
+  const [orderDateFrom, setOrderDateFrom] = useState<string>('');
+  const [orderDateTo, setOrderDateTo] = useState<string>('');
 
-  // Settings form state
-  const [settingsForm, setSettingsForm] = useState<Partial<ShopSettings>>({});
-  const [settingsSavedMsg, setSettingsSavedMsg] = useState(false);
+  // Inquiries filter
+  const [inquiryStatusFilter, setInquiryStatusFilter] = useState<string>('All');
 
-  // Quick settings template paste modal
-  const [isQuickSettingsModalOpen, setIsQuickSettingsModalOpen] = useState(false);
-  const [quickTemplateText, setQuickTemplateText] = useState('');
+  // Coupon Creation
+  const [newCouponCode, setNewCouponCode] = useState('');
+  const [newCouponType, setNewCouponType] = useState<'percentage' | 'fixed'>('percentage');
+  const [newCouponValue, setNewCouponValue] = useState(10);
+  const [newCouponMinOrder, setNewCouponMinOrder] = useState(1500);
 
-  // Supabase test state
-  const [testResult, setTestResult] = useState<any>(null);
-  const [testingSupabase, setTestingSupabase] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
 
-  // Check Supabase connection status
-  useEffect(() => {
-    api.getAdminStatus().then(status => {
-      setSupabaseStatus(status);
-      if (!emailInput && status.defaultEmail) {
-        setEmailInput(status.defaultEmail);
-      }
-    }).catch(console.error);
-  }, []);
+  // Synthesize clean audio chime with Web Audio API (Part C requirement)
+  const playNewOrderNotificationSound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.25); // A5
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.5);
+    } catch {}
+  };
 
-  // Load orders / inquiries / reviews if token exists
+  // Check auth session & call is_admin() RPC
+  const verifyAdminAuth = async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        setIsAuthenticated(false);
+        return false;
+      }
+
+      const { data: isAdmin, error } = await supabase.rpc('is_admin');
+      if (error || isAdmin !== true) {
+        // Sign out unauthorized user
+        await supabase.auth.signOut();
+        setIsAuthenticated(false);
+        return false;
+      }
+
+      setIsAuthenticated(true);
+      return true;
+    } catch {
+      setIsAuthenticated(false);
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      verifyAdminAuth().then((authed) => {
+        if (authed) {
+          loadAdminData();
+        }
+      });
+    }
+  }, [isOpen]);
+
+  // Realtime subscription on orders table (Part C)
+  useEffect(() => {
+    if (!isAuthenticated || !isOpen) return;
+
+    const channel = supabase
+      .channel('admin-orders-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'orders' },
+        (payload) => {
+          const newRow = payload.new as Order;
+          if (soundEnabled) {
+            playNewOrderNotificationSound();
+          }
+          setToastMessage(`New order received: ${newRow.order_number || 'MS-XXXX'}`);
+          setTimeout(() => setToastMessage(null), 5000);
+          loadAdminData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isAuthenticated, isOpen, soundEnabled]);
+
+  // Auto-refresh interval (Part I requirement: kitchen view 60s)
+  useEffect(() => {
+    if (isAuthenticated && isOpen) {
+      const interval = setInterval(() => {
+        loadAdminData();
+      }, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated, isOpen]);
+
+  // Fetch admin records
   const loadAdminData = async () => {
-    if (!token) return;
     setLoadingData(true);
     try {
-      const [ordList, inqList, msgList, revList] = await Promise.all([
-        api.getAdminOrders(token),
-        api.getAdminInquiries(token),
-        api.getAdminMessages(token),
-        api.getAdminReviews(token)
+      // Protect query with session verification
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        setIsAuthenticated(false);
+        return;
+      }
+
+      const [ords, inqs, msgs, revs, coups, boxes] = await Promise.all([
+        api.getAdminOrders(),
+        api.getAdminInquiries(),
+        api.getAdminMessages(),
+        api.getAdminReviews(),
+        api.getAdminCoupons(),
+        api.getGiftBoxes()
       ]);
-      setOrders(ordList);
-      setInquiries(inqList);
-      setMessages(msgList);
-      setReviews(revList);
+
+      setOrders(ords);
+      setInquiries(inqs);
+      setMessages(msgs);
+      setReviews(revs);
+      setCoupons(coups);
+      setGiftBoxes(boxes);
     } catch (err: any) {
-      console.error(err);
-      if (err.message?.includes('401') || err.message?.includes('session') || err.message?.includes('credentials')) {
-        setToken(null);
-        localStorage.removeItem('mithas_admin_token');
-        localStorage.removeItem('mithas_admin_email');
+      console.warn('Admin load error:', err);
+      if (err.message && (err.message.includes('JWT') || err.message.includes('unauthorized'))) {
+        setIsAuthenticated(false);
       }
     } finally {
       setLoadingData(false);
     }
   };
 
-  useEffect(() => {
-    if (token) {
-      loadAdminData();
-    }
-  }, [token]);
-
-  useEffect(() => {
-    if (settings) {
-      setSettingsForm(settings);
-    }
-  }, [settings]);
-
+  // Handle Login with is_admin() verification
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoginError(null);
-    setLoginLoading(true);
+    setAuthLoading(true);
+    setAuthError(null);
+
     try {
-      const authResult = await api.adminLogin(emailInput.trim(), passwordInput.trim());
-      setToken(authResult.token);
-      const userEmail = authResult.user?.email || emailInput.trim();
-      setAdminEmail(userEmail);
-      localStorage.setItem('mithas_admin_token', authResult.token);
-      localStorage.setItem('mithas_admin_email', userEmail);
-      setPasswordInput('');
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: authEmail.trim(),
+        password: authPassword
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Invalid credentials');
+      }
+
+      // Call is_admin() RPC
+      const { data: isAdmin, error: rpcErr } = await supabase.rpc('is_admin');
+      if (rpcErr || isAdmin !== true) {
+        await supabase.auth.signOut();
+        setIsAuthenticated(false);
+        setAuthError('Access denied. You are not authorized as admin.');
+        return;
+      }
+
+      setIsAuthenticated(true);
+      await loadAdminData();
     } catch (err: any) {
-      setLoginError(err.message || 'Login failed. Please check your credentials.');
+      setAuthError(err.message || 'Authentication failed. Please check credentials.');
     } finally {
-      setLoginLoading(false);
+      setAuthLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    setToken(null);
-    setAdminEmail('');
-    localStorage.removeItem('mithas_admin_token');
-    localStorage.removeItem('mithas_admin_email');
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setIsAuthenticated(false);
+    setOrders([]);
   };
 
-  // Image Upload handler
-  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !token) return;
-
-    setUploadingImage(true);
-    setUploadSuccess(false);
+  // Product quick-adjust stock
+  const handleQuickStockAdjust = async (product: Product, delta: number, reason: string) => {
+    const currentGrams = product.stock_grams ?? 0;
+    const newGrams = Math.max(0, currentGrams + delta);
     try {
-      const publicUrl = await api.uploadImage(token, file);
-      setProductForm(prev => ({ ...prev, image: publicUrl }));
-      setUploadSuccess(true);
-      setTimeout(() => setUploadSuccess(false), 3000);
+      await api.updateProduct(product.id, {
+        stock_grams: newGrams,
+        in_stock: newGrams > 0,
+        is_available: newGrams > 0 ? product.is_available : false
+      });
+      onRefreshProducts();
+      loadAdminData();
     } catch (err: any) {
-      alert(`Image upload error: ${err.message}. You can also paste an image URL.`);
-    } finally {
-      setUploadingImage(false);
+      alert('Failed to update stock: ' + err.message);
     }
   };
 
-  // Save Product (Create or Update)
-  const handleSaveProduct = async (e: React.FormEvent) => {
+  // Product inline toggle
+  const handleToggleProduct = async (product: Product, field: 'is_available' | 'is_featured') => {
+    try {
+      await api.updateProduct(product.id, {
+        [field]: !product[field]
+      });
+      onRefreshProducts();
+      loadAdminData();
+    } catch (err: any) {
+      alert(`Failed to update ${field}: ` + err.message);
+    }
+  };
+
+  // Product Delete
+  const handleDeleteProduct = async (product: Product) => {
+    const hasOrders = orders.some(o => o.items.some(it => it.product_id === product.id || it.name === product.name));
+    let msg = `Are you sure you want to delete "${product.name}"?`;
+    if (hasOrders) {
+      msg = `Warning: "${product.name}" is referenced in past customer orders. Deleting may affect historical line items. Are you sure you wish to delete?`;
+    }
+
+    if (confirm(msg)) {
+      try {
+        await api.deleteProduct(product.id);
+        onRefreshProducts();
+        loadAdminData();
+      } catch (err: any) {
+        alert('Failed to delete product: ' + err.message);
+      }
+    }
+  };
+
+  // Coupon Creation
+  const handleCreateCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token) return;
-
+    if (!newCouponCode.trim()) return;
     try {
-      if (editingProduct) {
-        await api.updateProduct(token, editingProduct.id, productForm);
-      } else {
-        await api.createProduct(token, productForm);
-      }
-      setIsProductModalOpen(false);
-      setEditingProduct(null);
-      onRefreshProducts();
+      await api.createCoupon({
+        code: newCouponCode.trim().toUpperCase(),
+        discount_type: newCouponType,
+        discount_value: Number(newCouponValue),
+        min_order_amount: Number(newCouponMinOrder),
+        is_active: true
+      });
+      setNewCouponCode('');
+      loadAdminData();
     } catch (err: any) {
-      alert(err.message || 'Failed to save product');
+      alert('Failed to create coupon: ' + err.message);
     }
   };
 
-  // Open Edit Product
-  const handleOpenEditProduct = (p: Product) => {
-    setEditingProduct(p);
-    setProductForm({
-      name: p.name,
-      category: p.category,
-      price_per_unit: p.price_per_unit,
-      unit: p.unit,
-      description: p.description,
-      image: p.image,
-      is_featured: p.is_featured,
-      in_stock: p.in_stock,
-      ingredients: p.ingredients || ''
-    });
-    setIsProductModalOpen(true);
+  // Calculations for Dashboard Stats (Part B)
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayOrders = orders.filter(o => o.created_at && o.created_at.startsWith(todayStr));
+  const todayRevenue = todayOrders.reduce((sum, o) => sum + (o.status !== 'Cancelled' ? o.total : 0), 0);
+
+  const totalOrdersCount = orders.length;
+  const totalRevenue = orders.reduce((sum, o) => sum + (o.status !== 'Cancelled' ? o.total : 0), 0);
+
+  const pendingOrders = orders.filter(o => o.status === 'New' || o.status === 'Confirmed');
+  const pendingPaymentVerifications = orders.filter(
+    o => o.payment_status === 'pending' && o.payment_method !== 'cod'
+  );
+  const lowStockProductsList = products.filter(
+    p => p.stock_grams <= (p.low_stock_threshold_grams || 500)
+  );
+
+  // Weekly bar chart data (Last 7 days: date vs order count and revenue)
+  const last7DaysData = Array.from({ length: 7 }).map((_, idx) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - idx));
+    const dayDateStr = d.toISOString().split('T')[0];
+    const dayLabel = d.toLocaleDateString([], { weekday: 'short', month: 'numeric', day: 'numeric' });
+
+    const matchingOrders = orders.filter(o => o.created_at && o.created_at.startsWith(dayDateStr));
+    const dayRevenue = matchingOrders.reduce((acc, o) => acc + (o.status !== 'Cancelled' ? o.total : 0), 0);
+
+    return {
+      date: dayLabel,
+      orders: matchingOrders.length,
+      revenue: dayRevenue
+    };
+  });
+
+  // 5 Most recent orders
+  const recent5Orders = [...orders]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 5);
+
+  const getTimeAgo = (dateStr: string) => {
+    const diffMs = Date.now() - new Date(dateStr).getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return `${Math.floor(diffHours / 24)}d ago`;
   };
 
-  // Open Add Product
-  const handleOpenAddProduct = () => {
-    setEditingProduct(null);
-    setProductForm({
-      name: '',
-      category: 'Barfi',
-      price_per_unit: 1800,
-      unit: 'kg',
-      description: '',
-      image: '/src/assets/images/mithas_barfi_assortment_1791385657557.jpg',
-      is_featured: false,
-      in_stock: true,
-      ingredients: ''
-    });
-    setIsProductModalOpen(true);
-  };
-
-  // Toggle in_stock
-  const handleToggleStock = async (p: Product) => {
-    if (!token) return;
-    try {
-      await api.updateProduct(token, p.id, { in_stock: !p.in_stock });
-      onRefreshProducts();
-    } catch (err: any) {
-      alert(err.message || 'Failed to update stock');
+  // Filtered orders list (Part C)
+  const filteredOrders = orders.filter(ord => {
+    if (orderFilterStatus !== 'All' && ord.status !== orderFilterStatus) return false;
+    if (orderFilterPayment !== 'All' && ord.payment_status !== orderFilterPayment) return false;
+    if (orderDateFrom && ord.created_at && ord.created_at.split('T')[0] < orderDateFrom) return false;
+    if (orderDateTo && ord.created_at && ord.created_at.split('T')[0] > orderDateTo) return false;
+    if (orderSearch.trim()) {
+      const q = orderSearch.toLowerCase();
+      const matchNum = ord.order_number?.toLowerCase().includes(q);
+      const matchName = ord.customer_name?.toLowerCase().includes(q);
+      const matchPhone = ord.customer_phone?.toLowerCase().includes(q);
+      if (!matchNum && !matchName && !matchPhone) return false;
     }
-  };
+    return true;
+  });
 
-  // Delete product
-  const handleDeleteProduct = async (id: string) => {
-    if (!token) return;
-    if (!confirm('Are you sure you want to remove this sweet from catalog?')) return;
-    try {
-      await api.deleteProduct(token, id);
-      onRefreshProducts();
-    } catch (err: any) {
-      alert(err.message || 'Failed to delete product');
-    }
-  };
+  // Filtered inquiries
+  const filteredInquiries = inquiries.filter(inq => {
+    if (inquiryStatusFilter !== 'All' && inq.status !== inquiryStatusFilter) return false;
+    return true;
+  });
 
-  // Clear all products
-  const handleClearAllProducts = async () => {
-    if (!token) return;
-    if (!confirm('CAUTION: This will delete ALL sweets from the catalog so you can enter your own real sweets. Are you sure?')) return;
-    try {
-      await api.clearAllProducts(token);
-      onRefreshProducts();
-      alert('All products removed. You can now add your sweets or use "Bulk Import Sweets".');
-    } catch (err: any) {
-      alert(err.message || 'Failed to clear products');
-    }
-  };
+  const unreadMessagesCount = messages.filter(m => m.is_read === false || m.status === 'Unread').length;
 
-  // Bulk Import Sweets
-  const handleBulkImport = async () => {
-    if (!token || !bulkInputText.trim()) return;
-    setBulkLoading(true);
-    setBulkMessage(null);
-
-    try {
-      // Parse line by line
-      // Supported format:
-      // Name | Category | Price | Unit | Description
-      // OR Name, Category, Price
-      // OR line with just Name (defaults applied)
-      const lines = bulkInputText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-      const parsedItems: any[] = [];
-
-      for (const line of lines) {
-        if (line.startsWith('#') || line.startsWith('//')) continue;
-        
-        let parts = line.includes('|') ? line.split('|') : line.split(',');
-        parts = parts.map(p => p.trim());
-
-        if (parts.length >= 1 && parts[0]) {
-          const name = parts[0];
-          const category = parts[1] || 'Mithai';
-          const price = parseFloat(parts[2]) || 1500;
-          const unit = parts[3] || 'kg';
-          const description = parts[4] || `${name} freshly made with pure ingredients.`;
-
-          parsedItems.push({
-            name,
-            category,
-            price_per_unit: price,
-            unit,
-            description,
-            image: '/src/assets/images/mithas_barfi_assortment_1791385657557.jpg',
-            is_featured: false,
-            in_stock: true,
-            ingredients: ''
-          });
-        }
-      }
-
-      if (parsedItems.length === 0) {
-        throw new Error('No valid sweets found. Please paste in format: Name | Category | Price | Unit | Description');
-      }
-
-      const res = await api.bulkImportProducts(token, parsedItems);
-      setBulkMessage(`Successfully imported ${res.count} sweets into catalog!`);
-      setBulkInputText('');
-      onRefreshProducts();
-      setTimeout(() => {
-        setIsBulkModalOpen(false);
-        setBulkMessage(null);
-      }, 2000);
-    } catch (err: any) {
-      setBulkMessage(`Error: ${err.message}`);
-    } finally {
-      setBulkLoading(false);
-    }
-  };
-
-  // Order status update
-  const handleUpdateOrderStatus = async (orderId: string, newStatus: Order['status']) => {
-    if (!token) return;
-    try {
-      await api.updateOrderStatus(token, orderId, newStatus);
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
-    } catch (err: any) {
-      alert(err.message || 'Failed to update order status');
-    }
-  };
-
-  // Inquiry status update
-  const handleUpdateInquiryStatus = async (inqId: string, newStatus: EventInquiry['status']) => {
-    if (!token) return;
-    try {
-      await api.updateInquiryStatus(token, inqId, newStatus);
-      setInquiries(prev => prev.map(i => i.id === inqId ? { ...i, status: newStatus } : i));
-    } catch (err: any) {
-      alert(err.message || 'Failed to update status');
-    }
-  };
-
-  // Review approval and deletion
-  const handleToggleReviewApproval = async (id: string, current: boolean) => {
-    if (!token) return;
-    try {
-      await api.updateReviewApproval(token, id, !current);
-      setReviews(prev => prev.map(r => r.id === id ? { ...r, is_approved: !current } : r));
-    } catch (err: any) {
-      alert(err.message || 'Failed to update review status');
-    }
-  };
-
-  const handleDeleteReview = async (id: string) => {
-    if (!token) return;
-    if (!confirm('Are you sure you want to delete this customer review?')) return;
-    try {
-      await api.deleteReview(token, id);
-      setReviews(prev => prev.filter(r => r.id !== id));
-    } catch (err: any) {
-      alert(err.message || 'Failed to delete review');
-    }
-  };
-
-  // Save Settings
-  const handleSaveSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!token) return;
-    try {
-      await api.updateSettings(token, settingsForm);
-      onRefreshSettings();
-      setSettingsSavedMsg(true);
-      setTimeout(() => setSettingsSavedMsg(false), 2500);
-    } catch (err: any) {
-      alert(err.message || 'Failed to save settings');
-    }
-  };
-
-  // Parse quick template text from user
-  const handleParseQuickTemplate = () => {
-    if (!quickTemplateText.trim()) return;
-
-    const lines = quickTemplateText.split('\n');
-    const updated: Partial<ShopSettings> = { ...settingsForm };
-
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
-      const lower = line.toLowerCase();
-
-      if (lower.includes('shop name:')) {
-        const val = line.split(/shop name:\s*/i)[1]?.trim();
-        if (val && !val.includes('[') && val !== '..') updated.shop_name = val;
-      } else if (lower.includes('tagline:')) {
-        const val = line.split(/tagline:\s*/i)[1]?.trim();
-        if (val && !val.includes('[') && val !== '..') updated.tagline = val;
-      } else if (lower.includes('address:') && lower.includes('city:')) {
-        const addrPart = line.match(/address:\s*([^,]+)/i)?.[1]?.trim();
-        const cityPart = line.match(/city:\s*(.+)/i)?.[1]?.trim();
-        if (addrPart && !addrPart.includes('[') && addrPart !== '..') updated.address = addrPart;
-        if (cityPart && !cityPart.includes('[') && cityPart !== '..') updated.city = cityPart;
-      } else if (lower.includes('phone:') || lower.includes('whatsapp:')) {
-        const phoneMatch = line.match(/phone:\s*([^,\n]+)/i)?.[1]?.trim();
-        const waMatch = line.match(/whatsapp:\s*([^,\n]+)/i)?.[1]?.trim();
-        if (phoneMatch && !phoneMatch.includes('[') && phoneMatch !== '..') updated.phone = phoneMatch;
-        if (waMatch && !waMatch.includes('[') && waMatch !== '..') updated.whatsapp = waMatch;
-      } else if (lower.includes('timings:')) {
-        const val = line.split(/timings:\s*/i)[1]?.trim();
-        if (val && !val.includes('[') && val !== '..') updated.timings = val;
-      } else if (lower.includes('delivery areas:')) {
-        const areas = line.match(/delivery areas:\s*([^,]+)/i)?.[1]?.trim();
-        const fee = line.match(/delivery fee:\s*([0-9]+)/i)?.[1]?.trim();
-        const freeAbove = line.match(/free delivery above:\s*([0-9]+)/i)?.[1]?.trim();
-        if (areas && !areas.includes('[') && areas !== '..') updated.delivery_areas = areas;
-        if (fee) updated.delivery_fee = Number(fee);
-        if (freeAbove) updated.free_delivery_threshold = Number(freeAbove);
-      } else if (lower.includes('payment methods') || lower.includes('account details:')) {
-        const val = line.split(/account details:\s*|payment methods:\s*/i)[1]?.trim();
-        if (val && !val.includes('[') && val !== '..') {
-          if (val.toLowerCase().includes('bank')) updated.bank_name = val;
-        }
-      } else if (lower.includes('social links:')) {
-        const val = line.split(/social links:\s*/i)[1]?.trim();
-        if (val && !val.includes('[') && val !== '..') {
-          if (val.includes('instagram.com')) updated.social_instagram = val;
-          if (val.includes('facebook.com')) updated.social_facebook = val;
-        }
-      } else if (lower.includes('about us text') || lower.includes('about us:')) {
-        const val = line.split(/about us (text \(use exactly this\)|text|us):\s*/i)[1]?.trim();
-        if (val && !val.includes('[') && val !== '..') updated.about_text = val;
-      }
-    }
-
-    setSettingsForm(updated);
-    setIsQuickSettingsModalOpen(false);
-    alert('Settings form populated from your template! Click "Save Shop Settings" below to commit.');
-  };
-
-  // Test Supabase Connection
-  const handleTestSupabase = async () => {
-    setTestingSupabase(true);
-    setTestResult(null);
-    try {
-      const res = await api.testSupabase();
-      setTestResult(res);
-    } catch (err: any) {
-      setTestResult({ connected: false, error: err.message });
-    } finally {
-      setTestingSupabase(false);
-    }
-  };
-
-  // Copy SQL script
-  const handleCopySql = () => {
-    navigator.clipboard.writeText(SUPABASE_SCHEMA_SQL);
-    setCopiedSql(true);
-    setTimeout(() => setCopiedSql(false), 2500);
-  };
-
-  // Compute live overview metrics
-  const totalRevenue = orders.reduce((acc, o) => acc + o.total, 0);
-  const pendingOrders = orders.filter(o => o.status === 'New' || o.status === 'Preparing').length;
-  const newInquiries = inquiries.filter(i => i.status === 'New').length;
-  const unapprovedReviews = reviews.filter(r => !r.is_approved).length;
+  if (!isOpen) return null;
 
   return (
-    <div 
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/70 backdrop-blur-xs animate-in fade-in"
-      onClick={onClose}
-    >
-      <div 
-        className="bg-white rounded-3xl max-w-5xl w-full h-[92vh] shadow-2xl border border-[#D9C8B4] flex flex-col overflow-hidden relative"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 overflow-hidden bg-black/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+      <div className="bg-[#FAF7F2] rounded-3xl w-full max-w-7xl h-[94vh] flex flex-col shadow-2xl border border-[#D9C8B4] overflow-hidden">
+        
         {/* Top Header */}
-        <div className="p-4 sm:p-5 border-b border-[#EAE2D5] bg-[#2A170A] text-white flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <ShieldCheck className="w-5 h-5 text-amber-400" />
+        <div className="px-6 py-4 bg-[#2A170A] text-white flex items-center justify-between border-b border-amber-950 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-amber-600/20 text-amber-400">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-serif font-bold text-amber-50">
-                  {settingsForm.shop_name || 'Mithas Sweets'} · Admin Portal
-                </h2>
-                {supabaseStatus?.supabaseConfigured ? (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-semibold flex items-center gap-1">
-                    <Database className="w-2.5 h-2.5" />
-                    Supabase Connected
-                  </span>
-                ) : (
-                  <button 
-                    onClick={() => setActiveAdminTab('database')}
-                    className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-700/60 font-semibold cursor-pointer transition-colors"
-                  >
-                    Connect Supabase ⚡
-                  </button>
-                )}
-              </div>
-              <span className="text-[11px] text-amber-200/70">
-                {adminEmail ? `Logged in: ${adminEmail}` : 'Secure Management Console'}
+              <h2 className="text-base sm:text-lg font-serif font-bold text-amber-100">
+                Mithas Sweets — Owner Administration
+              </h2>
+              <span className="text-[11px] text-amber-200/70 font-mono">
+                Postgres RLS · Auth Protected System
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {token && (
-              <button
-                onClick={handleLogout}
-                className="text-xs px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-              >
-                Log Out
-              </button>
+          <div className="flex items-center gap-3">
+            {toastMessage && (
+              <div className="hidden md:flex items-center gap-1.5 px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-semibold animate-pulse">
+                <Volume2 className="w-4 h-4 text-amber-400" />
+                <span>{toastMessage}</span>
+              </div>
             )}
+
+            {isAuthenticated && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSoundEnabled(!soundEnabled)}
+                  className={`p-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    soundEnabled ? 'bg-amber-800/60 text-amber-200' : 'bg-neutral-800 text-neutral-400'
+                  }`}
+                  title="Toggle new order audio alert"
+                >
+                  <Volume2 className="w-4 h-4" />
+                  <span className="hidden sm:inline">{soundEnabled ? 'Chime Active' : 'Muted'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={loadAdminData}
+                  disabled={loadingData}
+                  className="p-2 bg-amber-900/50 hover:bg-amber-800 rounded-xl text-amber-200 text-xs transition-colors cursor-pointer"
+                  title="Refresh records"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="px-3 py-1.5 bg-red-950 hover:bg-red-900 text-red-200 border border-red-800 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Logout</span>
+                </button>
+              </>
+            )}
+
             <button
               onClick={onClose}
-              className="p-1.5 rounded-full hover:bg-white/10 text-white transition-colors cursor-pointer"
+              className="p-2 rounded-xl hover:bg-neutral-800 text-neutral-300 transition-colors cursor-pointer"
+              title="Close Admin Panel"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Not Logged In Gate (Email & Password Supabase Auth) */}
-        {!token ? (
-          <div className="flex-1 flex items-center justify-center p-6 bg-[#FAF7F2]">
-            <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-[#D9C8B4] shadow-lg space-y-6 text-center">
-              <div className="w-14 h-14 rounded-full bg-[#FEF3C7] text-[#D97706] mx-auto flex items-center justify-center">
-                <Lock className="w-7 h-7" />
-              </div>
+        {/* Realtime Toast Popover on Mobile */}
+        {toastMessage && (
+          <div className="md:hidden bg-amber-600 text-white text-xs px-4 py-2 flex items-center justify-between font-semibold">
+            <span>{toastMessage}</span>
+            <button onClick={() => setToastMessage(null)}><X className="w-4 h-4" /></button>
+          </div>
+        )}
 
-              <div>
-                <h3 className="text-xl font-serif font-bold text-[#2A170A]">
-                  Admin Portal Login
-                </h3>
-                <p className="text-xs text-[#6B5544] mt-1">
-                  Authenticate using your admin email and password to manage sweets, update kitchen orders, and view inquiries.
+        {!isAuthenticated ? (
+          /* PART A: SECURE LOGIN SCREEN */
+          <div className="flex-1 flex items-center justify-center p-6 bg-[#FAF7F2]">
+            <div className="bg-white p-8 rounded-3xl max-w-md w-full shadow-2xl border border-[#D9C8B4] space-y-6">
+              <div className="text-center space-y-2">
+                <div className="w-14 h-14 bg-amber-50 text-[#C2410C] rounded-2xl flex items-center justify-center mx-auto border border-amber-200">
+                  <Lock className="w-7 h-7" />
+                </div>
+                <h3 className="text-2xl font-serif font-bold text-[#2A170A]">Admin Authentication</h3>
+                <p className="text-xs text-[#6B5544]">
+                  Sign in with authorized owner credentials. Role is validated against the Supabase database via the <code>is_admin()</code> function.
                 </p>
               </div>
 
-              {loginError && (
-                <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs flex items-center gap-2 text-left">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{loginError}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleLogin} className="space-y-4 text-left">
+              <form onSubmit={handleLogin} className="space-y-4">
                 <div>
-                  <label className="text-xs font-bold text-[#2A170A] block mb-1">
-                    Admin Email Address
-                  </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input
-                      type="email"
-                      placeholder="admin@mithassweets.com"
-                      value={emailInput}
-                      onChange={(e) => setEmailInput(e.target.value)}
-                      className="w-full text-xs pl-9 pr-3.5 py-2.5 rounded-xl border border-[#D9C8B4] focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                      required
-                      autoFocus
-                    />
-                  </div>
+                  <label className="text-xs font-semibold text-[#8C6D58] block mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder="owner@mithassweets.com"
+                    className="w-full px-3.5 py-2.5 text-xs bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl focus:outline-none focus:border-[#C2410C]"
+                  />
                 </div>
 
                 <div>
-                  <label className="text-xs font-bold text-[#2A170A] block mb-1">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input
-                      type="password"
-                      placeholder="Enter password"
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      className="w-full text-xs pl-9 pr-3.5 py-2.5 rounded-xl border border-[#D9C8B4] focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                      required
-                    />
-                  </div>
+                  <label className="text-xs font-semibold text-[#8C6D58] block mb-1">Password</label>
+                  <input
+                    type="password"
+                    required
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full px-3.5 py-2.5 text-xs bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl focus:outline-none focus:border-[#C2410C]"
+                  />
                 </div>
 
-                <div className="p-3 bg-[#FAF7F2] rounded-xl text-[11px] text-[#8C6D58] space-y-1 border border-[#EAE2D5]">
-                  <p><strong>Initial Demo Credentials:</strong></p>
-                  <p>Email: <code className="font-mono text-[#2A170A]">{supabaseStatus?.defaultEmail || 'admin@mithassweets.com'}</code></p>
-                  <p>Password: <code className="font-mono text-[#2A170A]">mithas2026</code></p>
-                </div>
+                {authError && (
+                  <div className="p-3 bg-red-50 text-red-800 text-xs rounded-xl flex items-center gap-2 border border-red-200">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                    <span>{authError}</span>
+                  </div>
+                )}
 
                 <button
                   type="submit"
-                  disabled={loginLoading}
-                  className="w-full py-3 bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  disabled={authLoading}
+                  className="w-full py-3 bg-[#C2410C] hover:bg-[#9A3412] text-white font-semibold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  {loginLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Verifying Credentials...</span>
-                    </>
-                  ) : (
-                    <span>Sign In to Admin Portal</span>
-                  )}
+                  {authLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  <span>Sign In as Admin</span>
                 </button>
               </form>
             </div>
           </div>
         ) : (
-          /* Logged In Dashboard */
-          <div className="flex-1 flex flex-col min-h-0 bg-[#FAF7F2]">
-            {/* Nav Tabs */}
-            <div className="bg-white px-4 sm:px-6 border-b border-[#EAE2D5] flex items-center justify-between overflow-x-auto no-scrollbar gap-2 py-2">
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  onClick={() => setActiveAdminTab('orders')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                    activeAdminTab === 'orders'
-                      ? 'bg-[#2A170A] text-white shadow-xs'
-                      : 'text-[#6B5544] hover:bg-[#FAF7F2]'
-                  }`}
-                >
-                  <Package className="w-3.5 h-3.5" />
-                  <span>Orders ({orders.length})</span>
-                  {pendingOrders > 0 && (
-                    <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  )}
-                </button>
-
-                <button
-                  onClick={() => setActiveAdminTab('products')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                    activeAdminTab === 'products'
-                      ? 'bg-[#2A170A] text-white shadow-xs'
-                      : 'text-[#6B5544] hover:bg-[#FAF7F2]'
-                  }`}
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Sweets Catalog ({products.length})</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveAdminTab('inquiries')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                    activeAdminTab === 'inquiries'
-                      ? 'bg-[#2A170A] text-white shadow-xs'
-                      : 'text-[#6B5544] hover:bg-[#FAF7F2]'
-                  }`}
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>Event Inquiries ({inquiries.length})</span>
-                  {newInquiries > 0 && (
-                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  )}
-                </button>
-
-                <button
-                  onClick={() => setActiveAdminTab('messages')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                    activeAdminTab === 'messages'
-                      ? 'bg-[#2A170A] text-white shadow-xs'
-                      : 'text-[#6B5544] hover:bg-[#FAF7F2]'
-                  }`}
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Messages ({messages.length})</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveAdminTab('reviews')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                    activeAdminTab === 'reviews'
-                      ? 'bg-[#2A170A] text-white shadow-xs'
-                      : 'text-[#6B5544] hover:bg-[#FAF7F2]'
-                  }`}
-                >
-                  <Star className="w-3.5 h-3.5" />
-                  <span>Reviews ({reviews.length})</span>
-                  {unapprovedReviews > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[10px] font-bold">
-                      {unapprovedReviews}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => setActiveAdminTab('settings')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                    activeAdminTab === 'settings'
-                      ? 'bg-[#2A170A] text-white shadow-xs'
-                      : 'text-[#6B5544] hover:bg-[#FAF7F2]'
-                  }`}
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  <span>Shop Settings</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveAdminTab('database')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                    activeAdminTab === 'database'
-                      ? 'bg-[#047857] text-white shadow-xs'
-                      : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
-                  }`}
-                >
-                  <Database className="w-3.5 h-3.5" />
-                  <span>Connect Supabase ⚡</span>
-                </button>
-              </div>
-
-              <button
-                onClick={loadAdminData}
-                disabled={loadingData}
-                className="p-1.5 text-[#6B5544] hover:text-[#2A170A] hover:bg-[#FAF7F2] rounded-lg transition-colors cursor-pointer shrink-0"
-                title="Refresh database records"
-              >
-                <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
-
-            {/* Quick Metrics Bar */}
-            <div className="bg-[#FAF7F2] px-4 sm:px-6 py-2.5 border-b border-[#EAE2D5] grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
-              <div className="bg-white p-2.5 rounded-xl border border-[#EAE2D5]">
-                <span className="text-[#8C6D58] block text-[11px]">Total Revenue</span>
-                <span className="text-sm font-bold text-[#2A170A] tabular-nums">
-                  Rs. {totalRevenue.toLocaleString()}
-                </span>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-[#EAE2D5]">
-                <span className="text-[#8C6D58] block text-[11px]">Total Orders Placed</span>
-                <span className="text-sm font-bold text-[#2A170A] tabular-nums">
-                  {orders.length} orders
-                </span>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-[#EAE2D5]">
-                <span className="text-[#8C6D58] block text-[11px]">Active Products</span>
-                <span className="text-sm font-bold text-[#2A170A] tabular-nums">
-                  {products.filter(p => p.in_stock).length} / {products.length} in stock
-                </span>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-[#EAE2D5]">
-                <span className="text-[#8C6D58] block text-[11px]">Pending Reviews</span>
-                <span className="text-sm font-bold text-amber-700 tabular-nums">
-                  {unapprovedReviews} awaiting approval
-                </span>
-              </div>
-            </div>
-
-            {/* Tab Body */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-              {/* TAB 1: ORDERS */}
-              {activeAdminTab === 'orders' && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-base font-bold text-[#2A170A]">
-                      Live Kitchen & Delivery Orders
-                    </h3>
-                    <span className="text-xs text-[#8C6D58]">
-                      Click status pills to change kitchen pipeline state
-                    </span>
-                  </div>
-
-                  {orders.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-[#6B5544] bg-white rounded-2xl border border-[#EAE2D5]">
-                      No orders placed yet. Place a test order from the shop front!
+          /* AUTHENTICATED WORKSPACE */
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+            {/* Sidebar Navigation on Desktop */}
+            <div className="hidden md:flex w-64 bg-white border-r border-[#EAE2D5] p-3 space-y-1 shrink-0 flex-col justify-start overflow-y-auto">
+              {[
+                { id: 'dashboard', label: 'Dashboard', icon: DollarSign },
+                { id: 'orders', label: 'Orders Management', icon: Package, badge: orders.length },
+                { id: 'kitchen', label: 'Kitchen View', icon: ChefHat, badge: pendingOrders.length || undefined },
+                { id: 'products', label: 'Products Catalog', icon: ShoppingBag, badge: lowStockProductsList.length ? `${lowStockProductsList.length} low` : undefined },
+                { id: 'inquiries', label: 'Event Inquiries', icon: Calendar, badge: inquiries.filter(i => i.status === 'New').length || undefined },
+                { id: 'messages', label: 'Contact Messages', icon: MessageSquare, badge: unreadMessagesCount || undefined },
+                { id: 'reviews', label: 'Reviews', icon: Star, badge: reviews.filter(r => !r.is_approved).length || undefined },
+                { id: 'settings', label: 'Shop Settings', icon: Settings },
+                { id: 'coupons', label: 'Coupons', icon: FileText },
+                { id: 'gift_boxes', label: 'Gift Boxes', icon: Award },
+                { id: 'sql', label: 'Database Setup SQL', icon: Database },
+              ].map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id as any)}
+                    className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-[#2A170A] text-white shadow-xs'
+                        : 'text-[#5A4132] hover:bg-[#FAF7F2]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Icon className="w-4 h-4" />
+                      <span>{item.label}</span>
                     </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {orders.map((ord) => (
-                        <div key={ord.id} className="bg-white p-4 rounded-2xl border border-[#E8DFC9] shadow-xs space-y-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#F2ECE1]">
-                            <div>
-                              <span className="font-mono text-xs font-bold text-[#C2410C] mr-2">
-                                {ord.order_number}
-                              </span>
-                              <span className="text-xs text-[#8C6D58]">
-                                {new Date(ord.created_at).toLocaleString()}
-                              </span>
-                            </div>
-
-                            {/* Status Selector */}
-                            <div className="flex items-center gap-1.5 text-xs">
-                              <span className="text-[#8C6D58] text-[11px]">Status:</span>
-                              {(['New', 'Preparing', 'Out for Delivery', 'Delivered', 'Cancelled'] as Order['status'][]).map((st) => (
-                                <button
-                                  key={st}
-                                  onClick={() => handleUpdateOrderStatus(ord.id, st)}
-                                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
-                                    ord.status === st
-                                      ? st === 'Delivered'
-                                        ? 'bg-emerald-700 text-white font-bold'
-                                        : st === 'Preparing'
-                                        ? 'bg-amber-600 text-white font-bold'
-                                        : 'bg-[#2A170A] text-white font-bold'
-                                      : 'bg-[#FAF7F2] text-[#6B5544] hover:text-[#2A170A] border border-[#EAE2D5]'
-                                  }`}
-                                >
-                                  {st}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Customer & Items Details */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-[#5A4132]">
-                            <div>
-                              <div><strong>Customer:</strong> {ord.customer_name} ({ord.customer_phone})</div>
-                              {ord.delivery_type === 'delivery' ? (
-                                <div><strong>Delivery Address:</strong> {ord.delivery_address}, {ord.delivery_city}</div>
-                              ) : (
-                                <div><strong>Store Pickup:</strong> {ord.pickup_time || 'Main Store'}</div>
-                              )}
-                              <div><strong>Payment:</strong> <span className="uppercase">{ord.payment_method}</span></div>
-                              {ord.special_notes && (
-                                <div className="text-amber-800"><strong>Notes:</strong> {ord.special_notes}</div>
-                              )}
-                            </div>
-
-                            <div>
-                              <strong className="block mb-1">Items:</strong>
-                              <ul className="space-y-0.5 text-[11px] text-[#6B5544]">
-                                {ord.items.map((item, idx) => (
-                                  <li key={idx} className="flex justify-between">
-                                    <span>• {item.name} ({item.quantity} {item.unit})</span>
-                                    <span className="font-mono tabular-nums">Rs. {item.total.toLocaleString()}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                              <div className="flex justify-between font-bold text-xs pt-1.5 border-t border-[#F2ECE1] mt-1 text-[#2A170A]">
-                                <span>Total:</span>
-                                <span className="tabular-nums text-[#C2410C]">Rs. {ord.total.toLocaleString()}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TAB 2: PRODUCTS */}
-              {activeAdminTab === 'products' && (
-                <div className="space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-base font-bold text-[#2A170A]">
-                        Manage Sweets Catalog ({products.length} items)
-                      </h3>
-                      <p className="text-xs text-[#8C6D58]">
-                        Stored in Supabase <code className="font-mono bg-gray-100 px-1 rounded">products</code> table & <code className="font-mono bg-gray-100 px-1 rounded">sweets-images</code> storage.
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        onClick={handleClearAllProducts}
-                        className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer"
-                        title="Delete all demo sweets so you can add your own"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Clear All Demo Sweets</span>
-                      </button>
-
-                      <button
-                        onClick={() => setIsBulkModalOpen(true)}
-                        className="px-3 py-1.5 bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#D9C8B4] text-[#2A170A] text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                      >
-                        <FileText className="w-3.5 h-3.5 text-[#C2410C]" />
-                        <span>Bulk Import Sweets</span>
-                      </button>
-
-                      <button
-                        onClick={handleOpenAddProduct}
-                        className="px-3.5 py-1.5 bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Add New Sweet</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {products.length === 0 ? (
-                    <div className="p-12 text-center bg-white rounded-3xl border border-[#E8DFC9] space-y-3">
-                      <Package className="w-10 h-10 text-gray-300 mx-auto" />
-                      <h4 className="text-sm font-bold text-[#2A170A]">Your sweets catalog is currently empty</h4>
-                      <p className="text-xs text-[#6B5544] max-w-md mx-auto">
-                        Add individual sweets with photos, or click "Bulk Import Sweets" to paste your complete list at once.
-                      </p>
-                      <button
-                        onClick={() => setIsBulkModalOpen(true)}
-                        className="px-4 py-2 bg-[#C2410C] text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer"
-                      >
-                        Paste Your Sweets List Now
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {products.map((p) => (
-                        <div key={p.id} className="bg-white p-3.5 rounded-2xl border border-[#E8DFC9] flex items-center justify-between gap-3 shadow-2xs">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <img
-                              src={p.image}
-                              alt={p.name}
-                              className="w-14 h-14 object-cover rounded-xl shrink-0 border border-[#EAE2D5]"
-                              referrerPolicy="no-referrer"
-                            />
-                            <div className="min-w-0">
-                              <h4 className="text-xs font-bold text-[#2A170A] truncate">{p.name}</h4>
-                              <div className="text-[11px] text-[#8C6D58]">
-                                {p.category} · Rs. {p.price_per_unit.toLocaleString()}/{p.unit}
-                              </div>
-                              <div className="text-[10px] text-[#6B5544]">
-                                Status: <span className={p.in_stock ? 'text-emerald-700 font-bold' : 'text-red-700 font-bold'}>
-                                  {p.in_stock ? 'In Stock' : 'Out of Stock'}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              onClick={() => handleToggleStock(p)}
-                              className={`px-2 py-1 text-[11px] font-semibold rounded-lg border transition-colors cursor-pointer ${
-                                p.in_stock
-                                  ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
-                                  : 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
-                              }`}
-                            >
-                              {p.in_stock ? 'Mark Out' : 'Restock'}
-                            </button>
-                            <button
-                              onClick={() => handleOpenEditProduct(p)}
-                              className="p-1.5 hover:bg-[#FAF7F2] text-[#2A170A] rounded-lg transition-colors cursor-pointer"
-                              title="Edit sweet"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteProduct(p.id)}
-                              className="p-1.5 hover:bg-red-50 text-red-700 rounded-lg transition-colors cursor-pointer"
-                              title="Delete sweet"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TAB 3: INQUIRIES */}
-              {activeAdminTab === 'inquiries' && (
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-[#2A170A]">
-                    Wedding & Corporate Bulk Inquiries
-                  </h3>
-
-                  {inquiries.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-[#6B5544] bg-white rounded-2xl border border-[#EAE2D5]">
-                      No event inquiries submitted yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {inquiries.map((inq) => (
-                        <div key={inq.id} className="bg-white p-4 rounded-2xl border border-[#E8DFC9] shadow-xs space-y-2 text-xs">
-                          <div className="flex items-center justify-between pb-2 border-b border-[#F2ECE1]">
-                            <div>
-                              <strong className="text-sm text-[#2A170A]">{inq.name}</strong>
-                              <span className="text-[#8C6D58] ml-2">({inq.phone})</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              {(['New', 'Contacted', 'Quoted', 'Confirmed'] as EventInquiry['status'][]).map((st) => (
-                                <button
-                                  key={st}
-                                  onClick={() => handleUpdateInquiryStatus(inq.id, st)}
-                                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
-                                    inq.status === st
-                                      ? 'bg-[#C2410C] text-white font-bold'
-                                      : 'bg-[#FAF7F2] text-[#6B5544] hover:text-[#2A170A] border border-[#EAE2D5]'
-                                  }`}
-                                >
-                                  {st}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[#5A4132]">
-                            <div><strong>Occasion:</strong> {inq.event_type}</div>
-                            <div><strong>Event Date:</strong> {inq.event_date}</div>
-                            <div><strong>Boxes:</strong> {inq.estimated_boxes}</div>
-                            <div><strong>Budget:</strong> {inq.budget_range || 'Standard'}</div>
-                          </div>
-
-                          {inq.custom_requirements && (
-                            <div className="p-2 bg-[#FAF7F2] rounded-lg text-[#6B5544]">
-                              <strong>Custom Notes:</strong> {inq.custom_requirements}
-                            </div>
-                          )}
-
-                          <div className="text-[11px] text-[#8C6D58]">
-                            Submitted on {new Date(inq.created_at).toLocaleDateString()}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TAB 4: MESSAGES */}
-              {activeAdminTab === 'messages' && (
-                <div className="space-y-4">
-                  <h3 className="text-base font-bold text-[#2A170A]">
-                    Customer Feedback & Contact Messages
-                  </h3>
-
-                  {messages.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-[#6B5544] bg-white rounded-2xl border border-[#EAE2D5]">
-                      No messages received yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {messages.map((m) => (
-                        <div key={m.id} className="bg-white p-4 rounded-2xl border border-[#E8DFC9] shadow-xs space-y-2 text-xs">
-                          <div className="flex items-center justify-between pb-2 border-b border-[#F2ECE1]">
-                            <div>
-                              <strong className="text-sm text-[#2A170A]">{m.name}</strong>
-                              <span className="text-[#8C6D58] ml-2">({m.phone})</span>
-                            </div>
-                            <span className="text-[11px] text-[#8C6D58]">
-                              {new Date(m.created_at).toLocaleDateString()}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="font-bold text-[#C2410C]">Subject: {m.subject}</span>
-                          </div>
-                          <p className="text-[#5A4132] whitespace-pre-wrap leading-relaxed">
-                            {m.message}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TAB 5: REVIEWS MODERATION */}
-              {activeAdminTab === 'reviews' && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-base font-bold text-[#2A170A]">
-                        Real Customer Reviews Moderation
-                      </h3>
-                      <p className="text-xs text-[#6B5544]">
-                        Only approved reviews appear on your public storefront. No fake claims are ever shown.
-                      </p>
-                    </div>
-                  </div>
-
-                  {reviews.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-[#6B5544] bg-white rounded-2xl border border-[#EAE2D5]">
-                      No customer reviews have been submitted through the website yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {reviews.map((r) => (
-                        <div key={r.id} className="bg-white p-4 rounded-2xl border border-[#E8DFC9] shadow-xs space-y-2 text-xs">
-                          <div className="flex items-center justify-between pb-2 border-b border-[#F2ECE1]">
-                            <div className="flex items-center gap-2">
-                              <strong className="text-sm text-[#2A170A]">{r.customer_name}</strong>
-                              {r.city && <span className="text-[#8C6D58]">({r.city})</span>}
-                              <div className="flex items-center text-amber-500 ml-2">
-                                {[...Array(r.rating)].map((_, i) => (
-                                  <Star key={i} className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => handleToggleReviewApproval(r.id, r.is_approved)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-                                  r.is_approved
-                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                    : 'bg-amber-100 text-amber-800 border border-amber-300'
-                                }`}
-                              >
-                                {r.is_approved ? '✓ Approved (Live on Site)' : '⏳ Pending Approval (Click to Approve)'}
-                              </button>
-
-                              <button
-                                onClick={() => handleDeleteReview(r.id)}
-                                className="p-1 hover:bg-red-50 text-red-600 rounded-lg transition-colors cursor-pointer"
-                                title="Delete review"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <p className="text-[#4A3223] italic leading-relaxed">
-                            "{r.comment}"
-                          </p>
-
-                          <div className="text-[11px] text-[#8C6D58]">
-                            Submitted on {new Date(r.created_at).toLocaleDateString()}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TAB 6: SHOP SETTINGS */}
-              {activeAdminTab === 'settings' && (
-                <div className="max-w-3xl bg-white p-6 sm:p-8 rounded-3xl border border-[#E8DFC9] shadow-xs space-y-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#F2ECE1]">
-                    <div>
-                      <h3 className="text-lg font-serif font-bold text-[#2A170A]">
-                        Shop Configuration & Payment Credentials
-                      </h3>
-                      <p className="text-xs text-[#6B5544]">
-                        Stored dynamically in Supabase <code className="font-mono bg-gray-100 px-1 rounded">settings</code> table. Updates reflect across the entire website instantly.
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsQuickSettingsModalOpen(true)}
-                      className="px-3.5 py-2 bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#D9C8B4] text-[#2A170A] text-xs font-semibold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-2xs whitespace-nowrap self-start sm:self-auto"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-[#C2410C]" />
-                      <span>Paste from Template / Fill Details</span>
-                    </button>
-                  </div>
-
-                  {settingsSavedMsg && (
-                    <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl text-xs flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      <span>Shop settings saved successfully to Supabase!</span>
-                    </div>
-                  )}
-
-                  <form onSubmit={handleSaveSettings} className="space-y-4 text-xs">
-                    {/* Basic Brand */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="font-bold text-[#2A170A] block mb-1">Shop Name *</label>
-                        <input
-                          type="text"
-                          value={settingsForm.shop_name || ''}
-                          onChange={(e) => setSettingsForm({ ...settingsForm, shop_name: e.target.value })}
-                          className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="font-bold text-[#2A170A] block mb-1">Tagline</label>
-                        <input
-                          type="text"
-                          value={settingsForm.tagline || ''}
-                          onChange={(e) => setSettingsForm({ ...settingsForm, tagline: e.target.value })}
-                          className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Optional Location Notes */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="font-bold text-[#2A170A] block mb-1">
-                          Store Location Note (Optional / Kept Private)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Sent via WhatsApp upon order"
-                          value={settingsForm.address || ''}
-                          onChange={(e) => setSettingsForm({ ...settingsForm, address: e.target.value })}
-                          className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                        />
-                        <span className="text-[10px] text-[#8C6D58]">
-                          Store address is removed from the public website; pickup instructions are sent on WhatsApp.
-                        </span>
-                      </div>
-                      <div>
-                        <label className="font-bold text-[#2A170A] block mb-1">City / Region (Optional)</label>
-                        <input
-                          type="text"
-                          placeholder="Optional"
-                          value={settingsForm.city || ''}
-                          onChange={(e) => setSettingsForm({ ...settingsForm, city: e.target.value })}
-                          className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Phone & WhatsApp */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="font-bold text-[#2A170A] block mb-1">Store Landline / Phone</label>
-                        <input
-                          type="text"
-                          value={settingsForm.phone || ''}
-                          onChange={(e) => setSettingsForm({ ...settingsForm, phone: e.target.value })}
-                          className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                        />
-                      </div>
-                      <div>
-                        <label className="font-bold text-[#2A170A] block mb-1">WhatsApp Number (Orders Dispatched Here) *</label>
-                        <input
-                          type="text"
-                          value={settingsForm.whatsapp || ''}
-                          onChange={(e) => setSettingsForm({ ...settingsForm, whatsapp: e.target.value })}
-                          className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    {/* Timings */}
-                    <div>
-                      <label className="font-bold text-[#2A170A] block mb-1">Shop Timings</label>
-                      <input
-                        type="text"
-                        placeholder="Monday – Sunday: 9:00 AM – 11:30 PM"
-                        value={settingsForm.timings || ''}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, timings: e.target.value })}
-                        className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                      />
-                    </div>
-
-                    {/* Delivery areas & fees */}
-                    <div className="p-4 bg-[#FAF7F2] rounded-2xl border border-[#EAE2D5] space-y-3">
-                      <h4 className="font-bold text-[#2A170A]">Delivery Settings</h4>
-                      <div>
-                        <label className="font-bold text-[#5A4132] block mb-1">Delivery Areas (Covered Zones)</label>
-                        <input
-                          type="text"
-                          placeholder="Gulberg, DHA, Model Town, Cantt, Garden Town, Johar Town"
-                          value={settingsForm.delivery_areas || ''}
-                          onChange={(e) => setSettingsForm({ ...settingsForm, delivery_areas: e.target.value })}
-                          className="w-full px-3 py-2 bg-white border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                        />
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="font-bold text-[#5A4132] block mb-1">Standard Delivery Fee (Rs.)</label>
-                          <input
-                            type="number"
-                            value={settingsForm.delivery_fee ?? 250}
-                            onChange={(e) => setSettingsForm({ ...settingsForm, delivery_fee: Number(e.target.value) })}
-                            className="w-full px-3 py-2 bg-white border border-[#D9C8B4] rounded-xl"
-                          />
-                        </div>
-                        <div>
-                          <label className="font-bold text-[#5A4132] block mb-1">Free Delivery Above (Rs.)</label>
-                          <input
-                            type="number"
-                            value={settingsForm.free_delivery_threshold ?? 4000}
-                            onChange={(e) => setSettingsForm({ ...settingsForm, free_delivery_threshold: Number(e.target.value) })}
-                            className="w-full px-3 py-2 bg-white border border-[#D9C8B4] rounded-xl"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Payment methods & accounts */}
-                    <div className="p-4 bg-[#FAF7F2] rounded-2xl border border-[#EAE2D5] space-y-3">
-                      <h4 className="font-bold text-[#C2410C]">Online Payment Accounts (Shown at Checkout)</h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[#5A4132] mb-1">Bank Name</label>
-                          <input
-                            type="text"
-                            placeholder="Meezan Bank Limited / HBL"
-                            value={settingsForm.bank_name || ''}
-                            onChange={(e) => setSettingsForm({ ...settingsForm, bank_name: e.target.value })}
-                            className="w-full px-2.5 py-1.5 bg-white border rounded-lg"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[#5A4132] mb-1">Bank Account Title</label>
-                          <input
-                            type="text"
-                            placeholder="Mithas Sweets Gourmet"
-                            value={settingsForm.bank_title || ''}
-                            onChange={(e) => setSettingsForm({ ...settingsForm, bank_title: e.target.value })}
-                            className="w-full px-2.5 py-1.5 bg-white border rounded-lg"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[#5A4132] mb-1">Bank Account Number</label>
-                          <input
-                            type="text"
-                            placeholder="0214-0108920192"
-                            value={settingsForm.bank_account_no || ''}
-                            onChange={(e) => setSettingsForm({ ...settingsForm, bank_account_no: e.target.value })}
-                            className="w-full px-2.5 py-1.5 bg-white border rounded-lg font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[#5A4132] mb-1">Bank IBAN</label>
-                          <input
-                            type="text"
-                            placeholder="PK45MEZN0002140108920192"
-                            value={settingsForm.bank_iban || ''}
-                            onChange={(e) => setSettingsForm({ ...settingsForm, bank_iban: e.target.value })}
-                            className="w-full px-2.5 py-1.5 bg-white border rounded-lg font-mono text-[11px]"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[#5A4132] mb-1">JazzCash Title & Number</label>
-                          <input
-                            type="text"
-                            placeholder="JazzCash: 0300-8472911"
-                            value={settingsForm.jazzcash_number || ''}
-                            onChange={(e) => setSettingsForm({ ...settingsForm, jazzcash_number: e.target.value })}
-                            className="w-full px-2.5 py-1.5 bg-white border rounded-lg font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[#5A4132] mb-1">Easypaisa Title & Number</label>
-                          <input
-                            type="text"
-                            placeholder="Easypaisa: 0300-8472911"
-                            value={settingsForm.easypaisa_number || ''}
-                            onChange={(e) => setSettingsForm({ ...settingsForm, easypaisa_number: e.target.value })}
-                            className="w-full px-2.5 py-1.5 bg-white border rounded-lg font-mono"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Social links */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="font-bold text-[#2A170A] block mb-1">Instagram URL</label>
-                        <input
-                          type="url"
-                          placeholder="https://instagram.com/mithassweets"
-                          value={settingsForm.social_instagram || ''}
-                          onChange={(e) => setSettingsForm({ ...settingsForm, social_instagram: e.target.value })}
-                          className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl"
-                        />
-                      </div>
-                      <div>
-                        <label className="font-bold text-[#2A170A] block mb-1">Facebook URL</label>
-                        <input
-                          type="url"
-                          placeholder="https://facebook.com/mithassweets"
-                          value={settingsForm.social_facebook || ''}
-                          onChange={(e) => setSettingsForm({ ...settingsForm, social_facebook: e.target.value })}
-                          className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl"
-                        />
-                      </div>
-                    </div>
-
-                    {/* About us text */}
-                    <div>
-                      <label className="font-bold text-[#2A170A] block mb-1">
-                        About Us Text (Rendered verbatim in About section with zero fabricated claims) *
-                      </label>
-                      <textarea
-                        rows={4}
-                        value={settingsForm.about_text || ''}
-                        onChange={(e) => setSettingsForm({ ...settingsForm, about_text: e.target.value })}
-                        className="w-full px-3 py-2 border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-                        placeholder="Welcome to our shop! We offer freshly prepared traditional sweets, barfi, laddus, and gift hampers for weddings and special occasions."
-                        required
-                      />
-                    </div>
-
-                    <div className="pt-2">
-                      <button
-                        type="submit"
-                        className="py-3 px-6 bg-[#C2410C] hover:bg-[#9A3412] text-white font-bold rounded-xl transition-all cursor-pointer shadow-md"
-                      >
-                        Save Shop Settings to Supabase
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              )}
-
-              {/* TAB 7: SUPABASE SETUP & CONNECT DATABASE */}
-              {activeAdminTab === 'database' && (
-                <div className="max-w-4xl bg-white p-6 sm:p-8 rounded-3xl border border-[#E8DFC9] shadow-xs space-y-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#F2ECE1]">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Database className="w-5 h-5 text-emerald-600" />
-                        <h3 className="text-lg font-serif font-bold text-[#2A170A]">
-                          Supabase Database Connection Guide
-                        </h3>
-                      </div>
-                      <p className="text-xs text-[#6B5544] mt-0.5">
-                        Connect your live PostgreSQL database on Supabase to store orders, sweets catalog, reviews, and settings.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handleTestSupabase}
-                        disabled={testingSupabase}
-                        className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
-                      >
-                        {testingSupabase ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                        <span>Test Connection</span>
-                      </button>
-
-                      <button
-                        onClick={handleCopySql}
-                        className="px-3.5 py-2 bg-[#FAF7F2] hover:bg-[#F2ECE1] border border-[#D9C8B4] text-[#2A170A] text-xs font-semibold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                      >
-                        {copiedSql ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{copiedSql ? 'Copied SQL!' : 'Copy Schema SQL'}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Test Connection Result Box */}
-                  {testResult && (
-                    <div className={`p-4 rounded-2xl border text-xs space-y-1.5 ${
-                      testResult.connected
-                        ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                        : 'bg-amber-50 border-amber-300 text-amber-900'
-                    }`}>
-                      <div className="font-bold flex items-center gap-2">
-                        {testResult.connected ? (
-                          <>
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            <span>Connection Successful! Supabase is Live.</span>
-                          </>
-                        ) : (
-                          <>
-                            <AlertCircle className="w-4 h-4 text-amber-600" />
-                            <span>Supabase Status: Not fully active</span>
-                          </>
-                        )}
-                      </div>
-                      <p>{testResult.message || testResult.error}</p>
-                      {testResult.hint && <p className="font-medium text-amber-800">Hint: {testResult.hint}</p>}
-                      {testResult.totalProductsInDB !== undefined && (
-                        <p className="font-mono text-[11px]">Total products in Supabase: {testResult.totalProductsInDB}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Urdu & English Step-by-Step Instructions */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                    <div className="p-4 bg-[#FAF7F2] rounded-2xl border border-[#EAE2D5] space-y-3">
-                      <h4 className="font-bold text-[#C2410C] text-sm">
-                        اردو میں ہدایات (Connecting Steps)
-                      </h4>
-                      <ol className="space-y-2 text-[#5A4132] list-decimal pl-4 leading-relaxed">
-                        <li>
-                          <strong>Supabase اکاؤنٹ:</strong> <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-[#C2410C] underline">supabase.com</a> پر جا کر مفت پروجیکٹ بنائیں.
-                        </li>
-                        <li>
-                          <strong>API Keys حاصل کریں:</strong> Project Settings &gt; API میں جائیں۔ وہاں سے <code>Project URL</code> اور <code>service_role</code> secret key کاپی کریں۔
-                        </li>
-                        <li>
-                          <strong>Environment File (.env):</strong> اپنی <code>.env</code> فائل میں یہ دونوں ویریبلز شامل کریں:
-                          <pre className="mt-1 p-2 bg-white rounded-lg border font-mono text-[11px] overflow-x-auto text-[#2A170A]">
-SUPABASE_URL="https://xxx.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY="eyJhbGci..."
-                          </pre>
-                        </li>
-                        <li>
-                          <strong>SQL ٹیبلز بنائیں:</strong> Supabase ڈیش بورڈ میں <strong>SQL Editor</strong> کھولیں، اوپر دیے گئے بٹن <em>"Copy Schema SQL"</em> پر کلک کر کے سکرپٹ پیسٹ کریں اور <strong>Run</strong> دبائیں۔
-                        </li>
-                      </ol>
-                    </div>
-
-                    <div className="p-4 bg-white rounded-2xl border border-[#EAE2D5] space-y-3">
-                      <h4 className="font-bold text-[#2A170A] text-sm">
-                        English Instructions & Schema Details
-                      </h4>
-                      <ul className="space-y-2 text-[#5A4132] leading-relaxed">
-                        <li>
-                          <strong>Tables Provisioned:</strong> <code>products</code>, <code>orders</code>, <code>event_inquiries</code>, <code>contact_messages</code>, <code>reviews</code>, <code>settings</code>.
-                        </li>
-                        <li>
-                          <strong>Storage Bucket:</strong> <code>sweets-images</code> is created automatically with public read access for sweet photos.
-                        </li>
-                        <li>
-                          <strong>Security (RLS):</strong> Row Level Security is configured with public read for products, settings, and approved reviews.
-                        </li>
-                        <li>
-                          <strong>No Downtime Fallback:</strong> While you set up your keys, the system maintains local fallback storage automatically.
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-
-                  {/* Schema Preview */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs font-bold text-[#2A170A]">
-                      <span>SQL Schema Script (Run in Supabase SQL Editor):</span>
-                      <button
-                        onClick={handleCopySql}
-                        className="text-[#C2410C] hover:underline flex items-center gap-1 cursor-pointer font-semibold"
-                      >
-                        {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{copiedSql ? 'Copied to Clipboard!' : 'Copy Full SQL'}</span>
-                      </button>
-                    </div>
-                    <pre className="p-4 bg-[#2A170A] text-amber-100 rounded-2xl font-mono text-[11px] overflow-x-auto max-h-64 border border-[#3D2619]">
-                      {SUPABASE_SCHEMA_SQL}
-                    </pre>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Product Add / Edit Submodal (with Supabase Storage Upload) */}
-        {isProductModalOpen && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-            <div className="bg-white rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 border border-[#D9C8B4] shadow-2xl relative">
-              <button
-                onClick={() => setIsProductModalOpen(false)}
-                className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-gray-100 text-gray-700 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-
-              <h3 className="text-lg font-serif font-bold text-[#2A170A]">
-                {editingProduct ? 'Edit Sweet Item' : 'Add New Sweet to Menu'}
-              </h3>
-
-              <form onSubmit={handleSaveProduct} className="space-y-3 text-xs">
-                <div>
-                  <label className="font-bold block mb-1">Sweet Name *</label>
-                  <input
-                    type="text"
-                    value={productForm.name}
-                    onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl"
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="font-bold block mb-1">Category *</label>
-                    <select
-                      value={productForm.category}
-                      onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
-                      className="w-full px-2.5 py-2 border rounded-xl"
-                    >
-                      <option value="Barfi">Barfi</option>
-                      <option value="Laddu">Laddu</option>
-                      <option value="Halwa">Halwa</option>
-                      <option value="Mithai">Mithai</option>
-                      <option value="Dry Fruit Sweets">Dry Fruit Sweets</option>
-                      <option value="Cakes">Cakes</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="font-bold block mb-1">Price (Rs.) *</label>
-                    <input
-                      type="number"
-                      value={productForm.price_per_unit}
-                      onChange={(e) => setProductForm({ ...productForm, price_per_unit: Number(e.target.value) })}
-                      className="w-full px-2.5 py-2 border rounded-xl"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold block mb-1">Unit *</label>
-                    <select
-                      value={productForm.unit}
-                      onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })}
-                      className="w-full px-2.5 py-2 border rounded-xl"
-                    >
-                      <option value="kg">per kg</option>
-                      <option value="piece">per piece</option>
-                      <option value="box">per box</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Image upload with Supabase Storage */}
-                <div className="space-y-1.5 p-3 bg-[#FAF7F2] rounded-xl border border-[#EAE2D5]">
-                  <label className="font-bold block text-[#2A170A]">
-                    Sweet Image (Upload to Supabase Storage or Paste URL)
-                  </label>
-                  
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleImageFileChange}
-                      accept="image/*"
-                      className="hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploadingImage}
-                      className="px-3 py-1.5 bg-white border border-[#D9C8B4] hover:bg-gray-50 text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                    >
-                      {uploadingImage ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                      <span>{uploadingImage ? 'Uploading...' : 'Upload Image'}</span>
-                    </button>
-                    {uploadSuccess && (
-                      <span className="text-emerald-700 text-[11px] font-semibold flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" /> Uploaded to Supabase!
+                    {item.badge && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold ${
+                        isActive ? 'bg-amber-600 text-white' : 'bg-amber-100 text-[#8C6D58]'
+                      }`}>
+                        {item.badge}
                       </span>
                     )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Bottom Tab Bar on Mobile */}
+            <div className="md:hidden flex overflow-x-auto bg-white border-b border-[#EAE2D5] px-2 py-1.5 gap-1 shrink-0 no-scrollbar">
+              {[
+                { id: 'dashboard', label: 'Stats', icon: DollarSign },
+                { id: 'orders', label: 'Orders', icon: Package },
+                { id: 'kitchen', label: 'Kitchen', icon: ChefHat },
+                { id: 'products', label: 'Catalog', icon: ShoppingBag },
+                { id: 'inquiries', label: 'Events', icon: Calendar },
+                { id: 'messages', label: 'Messages', icon: MessageSquare },
+                { id: 'reviews', label: 'Reviews', icon: Star },
+                { id: 'settings', label: 'Settings', icon: Settings },
+              ].map(item => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id as any)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap ${
+                      isActive ? 'bg-[#2A170A] text-white' : 'text-[#5A4132] bg-[#FAF7F2]'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Main Content Area */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+              
+              {/* PART B: ADMIN DASHBOARD (HOME TAB) */}
+              {activeTab === 'dashboard' && (
+                <div className="space-y-6">
+                  {/* Top Live Stats Loaded from Supabase */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+                    {/* Today's Orders & Revenue */}
+                    <div className="bg-white p-5 rounded-3xl border border-[#EAE2D5] shadow-xs space-y-1">
+                      <span className="text-[11px] font-bold text-[#8C6D58] uppercase tracking-wider block">Today's Orders</span>
+                      <div className="text-2xl font-serif font-bold text-[#2A170A]">
+                        {todayOrders.length}
+                      </div>
+                      <span className="text-xs font-mono font-bold text-[#C2410C] block">
+                        Rs. {todayRevenue.toLocaleString()}
+                      </span>
+                    </div>
+
+                    {/* Total All-Time Orders & Revenue */}
+                    <div className="bg-white p-5 rounded-3xl border border-[#EAE2D5] shadow-xs space-y-1">
+                      <span className="text-[11px] font-bold text-[#8C6D58] uppercase tracking-wider block">All-Time Revenue</span>
+                      <div className="text-2xl font-serif font-bold text-[#2A170A]">
+                        Rs. {totalRevenue.toLocaleString()}
+                      </div>
+                      <span className="text-xs text-[#8C6D58] block">
+                        {totalOrdersCount} total orders
+                      </span>
+                    </div>
+
+                    {/* Pending Orders (New or Confirmed) */}
+                    <div className="bg-white p-5 rounded-3xl border border-[#EAE2D5] shadow-xs space-y-1">
+                      <span className="text-[11px] font-bold text-[#8C6D58] uppercase tracking-wider block">Pending Orders</span>
+                      <div className="text-2xl font-serif font-bold text-amber-700">
+                        {pendingOrders.length}
+                      </div>
+                      <span className="text-xs text-[#8C6D58] block">
+                        Status: New / Confirmed
+                      </span>
+                    </div>
+
+                    {/* Pending Payment Verifications */}
+                    <div className="bg-white p-5 rounded-3xl border border-[#EAE2D5] shadow-xs space-y-1">
+                      <span className="text-[11px] font-bold text-[#8C6D58] uppercase tracking-wider block">Unverified Payments</span>
+                      <div className="text-2xl font-serif font-bold text-purple-700">
+                        {pendingPaymentVerifications.length}
+                      </div>
+                      <span className="text-xs text-[#8C6D58] block">
+                        Online / Bank receipts
+                      </span>
+                    </div>
+
+                    {/* Low Stock Products */}
+                    <div className="bg-white p-5 rounded-3xl border border-[#EAE2D5] shadow-xs space-y-1">
+                      <span className="text-[11px] font-bold text-[#8C6D58] uppercase tracking-wider block">Low Stock Sweets</span>
+                      <div className="text-2xl font-serif font-bold text-red-600">
+                        {lowStockProductsList.length}
+                      </div>
+                      <span className="text-xs text-[#8C6D58] block">
+                        Under threshold weight
+                      </span>
+                    </div>
                   </div>
 
-                  <input
-                    type="text"
-                    placeholder="Or enter direct image URL"
-                    value={productForm.image}
-                    onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
-                    className="w-full px-2.5 py-1.5 border rounded-lg bg-white font-mono text-[11px]"
-                    required
-                  />
-                </div>
+                  {/* Weekly Bar Chart (recharts: date vs order count and revenue) */}
+                  <div className="bg-white p-6 rounded-3xl border border-[#EAE2D5] shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                      <div>
+                        <h3 className="text-base font-serif font-bold text-[#2A170A]">Last 7 Days Performance</h3>
+                        <p className="text-xs text-[#8C6D58]">Daily breakdown of order count and total revenue (PKR)</p>
+                      </div>
+                      <span className="text-xs font-semibold px-3 py-1 bg-amber-50 text-[#C2410C] rounded-lg border border-amber-200 self-start">
+                        Live Supabase Aggregate
+                      </span>
+                    </div>
 
-                <div>
-                  <label className="font-bold block mb-1">Description</label>
-                  <textarea
-                    rows={2}
-                    value={productForm.description}
-                    onChange={(e) => setProductForm({ ...productForm, description: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl"
-                  />
-                </div>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={last7DaysData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#F2ECE1" />
+                          <XAxis dataKey="date" stroke="#8C6D58" fontSize={11} />
+                          <YAxis yAxisId="left" stroke="#C2410C" fontSize={11} />
+                          <YAxis yAxisId="right" orientation="right" stroke="#2A170A" fontSize={11} />
+                          <Tooltip 
+                            formatter={(value: any, name: any) => [
+                              name === 'revenue' ? `Rs. ${Number(value).toLocaleString()}` : `${value} orders`,
+                              name === 'revenue' ? 'Daily Revenue' : 'Orders Count'
+                            ]}
+                            contentStyle={{ backgroundColor: '#FAF7F2', borderRadius: '12px', border: '1px solid #D9C8B4' }}
+                          />
+                          <Legend />
+                          <Bar yAxisId="left" dataKey="revenue" fill="#C2410C" name="revenue" radius={[4, 4, 0, 0]} />
+                          <Bar yAxisId="right" dataKey="orders" fill="#2A170A" name="orders" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
 
-                <div>
-                  <label className="font-bold block mb-1">Ingredients (comma separated)</label>
-                  <input
-                    type="text"
-                    placeholder="Khoya, Pistachios, Cardamom, Sugar"
-                    value={productForm.ingredients}
-                    onChange={(e) => setProductForm({ ...productForm, ingredients: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl"
-                  />
-                </div>
+                  {/* 5 Most Recent Orders */}
+                  <div className="bg-white rounded-3xl border border-[#EAE2D5] shadow-xs p-6 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h3 className="text-base font-serif font-bold text-[#2A170A]">5 Most Recent Orders</h3>
+                        <p className="text-xs text-[#8C6D58]">Latest customer bookings received</p>
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('orders')}
+                        className="text-xs font-semibold text-[#C2410C] hover:underline cursor-pointer"
+                      >
+                        View All Orders →
+                      </button>
+                    </div>
 
-                <div className="flex items-center gap-4 pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={productForm.in_stock}
-                      onChange={(e) => setProductForm({ ...productForm, in_stock: e.target.checked })}
-                      className="w-4 h-4 accent-[#C2410C]"
-                    />
-                    <span className="font-semibold text-xs">In Stock</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={productForm.is_featured}
-                      onChange={(e) => setProductForm({ ...productForm, is_featured: e.target.checked })}
-                      className="w-4 h-4 accent-[#C2410C]"
-                    />
-                    <span className="font-semibold text-xs">Featured on Home Page</span>
-                  </label>
-                </div>
-
-                <div className="pt-3 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsProductModalOpen(false)}
-                    className="px-4 py-2 border rounded-xl text-xs hover:bg-gray-50 cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 bg-[#C2410C] hover:bg-[#9A3412] text-white font-bold rounded-xl text-xs cursor-pointer shadow-xs"
-                  >
-                    {editingProduct ? 'Save Changes' : 'Create Sweet'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Bulk Sweets Import Submodal */}
-        {isBulkModalOpen && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-            <div className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 border border-[#D9C8B4] shadow-2xl relative">
-              <button
-                onClick={() => setIsBulkModalOpen(false)}
-                className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-gray-100 text-gray-700 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-
-              <div>
-                <h3 className="text-lg font-serif font-bold text-[#2A170A]">
-                  Bulk Import Sweets
-                </h3>
-                <p className="text-xs text-[#6B5544] mt-1">
-                  Paste your sweets list below. Format: <code className="font-mono bg-gray-100 px-1 rounded">Name | Category | Price | Unit | Description</code>
-                </p>
-              </div>
-
-              {bulkMessage && (
-                <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl text-xs">
-                  {bulkMessage}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-[#FAF7F2] text-[#8C6D58] uppercase border-b border-[#EAE2D5]">
+                          <tr>
+                            <th className="p-3">Order Number</th>
+                            <th className="p-3">Customer</th>
+                            <th className="p-3">Total</th>
+                            <th className="p-3">Status</th>
+                            <th className="p-3 text-right">Time Ago</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#F2ECE1]">
+                          {recent5Orders.length > 0 ? (
+                            recent5Orders.map(ord => (
+                              <tr 
+                                key={ord.id} 
+                                onClick={() => setSelectedOrder(ord)}
+                                className="hover:bg-[#FAF7F2] cursor-pointer"
+                              >
+                                <td className="p-3 font-mono font-bold text-[#C2410C]">{ord.order_number}</td>
+                                <td className="p-3 font-semibold text-[#2A170A]">{ord.customer_name}</td>
+                                <td className="p-3 font-mono font-bold">Rs. {ord.total.toLocaleString()}</td>
+                                <td className="p-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                    ord.status === 'Delivered' ? 'bg-emerald-100 text-emerald-800' :
+                                    ord.status === 'Cancelled' ? 'bg-red-100 text-red-800' :
+                                    'bg-amber-100 text-amber-900'
+                                  }`}>
+                                    {ord.status}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-right text-[#8C6D58]">{getTimeAgo(ord.created_at)}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={5} className="p-6 text-center text-[#8C6D58]">
+                                No customer orders recorded yet.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               )}
 
-              <textarea
-                rows={8}
-                value={bulkInputText}
-                onChange={(e) => setBulkInputText(e.target.value)}
-                placeholder={`Pistachio Saffron Barfi | Barfi | 1950 | kg | Fresh milk khoya barfi with saffron
-Kaju Katli | Mithai | 2400 | kg | Pure cashew nut confection
-Motichoor Laddu | Laddu | 1450 | kg | Melt-in-mouth gram flour pearls in pure desi ghee
-Multani Sohan Halwa | Halwa | 1850 | kg | Generational recipe with sprouted wheat & walnuts`}
-                className="w-full p-3 font-mono text-xs border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-              />
+              {/* PART C: ORDER MANAGEMENT TAB */}
+              {activeTab === 'orders' && (
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                    <div>
+                      <h3 className="text-xl font-serif font-bold text-[#2A170A]">Customer Orders</h3>
+                      <p className="text-xs text-[#8C6D58]">
+                        Review receipts, verify payments, update delivery statuses, and print invoices.
+                      </p>
+                    </div>
+                    <span className="text-xs font-semibold px-3 py-1 bg-white border border-[#D9C8B4] rounded-xl self-start">
+                      {filteredOrders.length} matching orders
+                    </span>
+                  </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsBulkModalOpen(false)}
-                  className="px-4 py-2 border rounded-xl text-xs hover:bg-gray-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBulkImport}
-                  disabled={bulkLoading || !bulkInputText.trim()}
-                  className="px-5 py-2 bg-[#C2410C] hover:bg-[#9A3412] text-white font-bold rounded-xl text-xs cursor-pointer shadow-xs disabled:opacity-50 flex items-center gap-2"
-                >
-                  {bulkLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                  <span>Import Sweets List</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+                  {/* Filter Toolbar */}
+                  <div className="bg-white p-4 rounded-3xl border border-[#EAE2D5] shadow-xs grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+                    {/* Search */}
+                    <div>
+                      <label className="font-semibold text-[#8C6D58] block mb-1">Search</label>
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-[#8C6D58]" />
+                        <input
+                          type="text"
+                          value={orderSearch}
+                          onChange={(e) => setOrderSearch(e.target.value)}
+                          placeholder="Order no, name, phone"
+                          className="w-full pl-8 pr-3 py-2 bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl"
+                        />
+                      </div>
+                    </div>
 
-        {/* Quick Settings Paste Template Submodal */}
-        {isQuickSettingsModalOpen && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-            <div className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 border border-[#D9C8B4] shadow-2xl relative">
-              <button
-                onClick={() => setIsQuickSettingsModalOpen(false)}
-                className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-gray-100 text-gray-700 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+                    {/* Status Filter */}
+                    <div>
+                      <label className="font-semibold text-[#8C6D58] block mb-1">Order Status</label>
+                      <select
+                        value={orderFilterStatus}
+                        onChange={(e) => setOrderFilterStatus(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl font-semibold"
+                      >
+                        <option value="All">All Statuses</option>
+                        <option value="New">New</option>
+                        <option value="Confirmed">Confirmed</option>
+                        <option value="Preparing">Preparing</option>
+                        <option value="Out for Delivery">Out for Delivery</option>
+                        <option value="Delivered">Delivered</option>
+                        <option value="Cancelled">Cancelled</option>
+                      </select>
+                    </div>
 
-              <div>
-                <h3 className="text-lg font-serif font-bold text-[#2A170A]">
-                  Paste Real Shop Details
-                </h3>
-                <p className="text-xs text-[#6B5544] mt-1">
-                  Paste your shop details template block below to auto-fill the settings form:
-                </p>
-              </div>
+                    {/* Payment Status Filter */}
+                    <div>
+                      <label className="font-semibold text-[#8C6D58] block mb-1">Payment Status</label>
+                      <select
+                        value={orderFilterPayment}
+                        onChange={(e) => setOrderFilterPayment(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl font-semibold"
+                      >
+                        <option value="All">All Payments</option>
+                        <option value="pending">Pending</option>
+                        <option value="verified">Verified</option>
+                        <option value="rejected">Rejected</option>
+                      </select>
+                    </div>
 
-              <textarea
-                rows={9}
-                value={quickTemplateText}
-                onChange={(e) => setQuickTemplateText(e.target.value)}
-                placeholder={`Shop name: Royal Mithas Sweets
-Tagline: Fresh Pure Desi Ghee Confections
-Address: Shop 14-B, Main Boulevard, Gulberg III, City: Lahore
-Phone: +92 42 35789123, WhatsApp: +92 300 8472911
-Timings: Monday – Sunday: 9:00 AM – 11:30 PM
-Delivery areas: Gulberg, DHA, Model Town, Cantt, delivery fee: 250, free delivery above: 4000
-About us text (use exactly this): Welcome to our shop! We offer freshly made traditional sweets.`}
-                className="w-full p-3 font-mono text-xs border border-[#D9C8B4] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#C2410C]"
-              />
+                    {/* Date From */}
+                    <div>
+                      <label className="font-semibold text-[#8C6D58] block mb-1">From Date</label>
+                      <input
+                        type="date"
+                        value={orderDateFrom}
+                        onChange={(e) => setOrderDateFrom(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl"
+                      />
+                    </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsQuickSettingsModalOpen(false)}
-                  className="px-4 py-2 border rounded-xl text-xs hover:bg-gray-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleParseQuickTemplate}
-                  disabled={!quickTemplateText.trim()}
-                  className="px-5 py-2 bg-[#C2410C] hover:bg-[#9A3412] text-white font-bold rounded-xl text-xs cursor-pointer shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Parse & Auto-Fill Form</span>
-                </button>
-              </div>
+                    {/* Date To */}
+                    <div>
+                      <label className="font-semibold text-[#8C6D58] block mb-1">To Date</label>
+                      <input
+                        type="date"
+                        value={orderDateTo}
+                        onChange={(e) => setOrderDateTo(e.target.value)}
+                        className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Orders Table */}
+                  <div className="bg-white rounded-3xl border border-[#EAE2D5] overflow-hidden shadow-xs">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-[#FAF7F2] text-[#8C6D58] uppercase tracking-wider border-b border-[#EAE2D5]">
+                          <tr>
+                            <th className="p-3">Order Number</th>
+                            <th className="p-3">Customer</th>
+                            <th className="p-3">Phone</th>
+                            <th className="p-3">Items Summary</th>
+                            <th className="p-3">Total</th>
+                            <th className="p-3">Payment</th>
+                            <th className="p-3">Payment Status</th>
+                            <th className="p-3">Order Status</th>
+                            <th className="p-3">Created At</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#F2ECE1]">
+                          {filteredOrders.length > 0 ? (
+                            filteredOrders.map(ord => (
+                              <tr 
+                                key={ord.id}
+                                onClick={() => setSelectedOrder(ord)}
+                                className="hover:bg-[#FAF7F2] cursor-pointer transition-colors"
+                              >
+                                <td className="p-3 font-mono font-bold text-[#C2410C]">
+                                  {ord.order_number}
+                                </td>
+                                <td className="p-3 font-semibold text-[#2A170A]">
+                                  {ord.customer_name}
+                                </td>
+                                <td className="p-3 font-mono text-[#5A4132]">
+                                  {ord.customer_phone}
+                                </td>
+                                <td className="p-3 max-w-xs truncate">
+                                  {ord.items.map(i => `${i.name} (${i.quantity} ${i.unit})`).join(', ')}
+                                </td>
+                                <td className="p-3 font-mono font-bold text-[#2A170A]">
+                                  Rs. {ord.total.toLocaleString()}
+                                </td>
+                                <td className="p-3 uppercase font-medium">
+                                  {ord.payment_method}
+                                </td>
+                                <td className="p-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                    ord.payment_status === 'verified' ? 'bg-emerald-100 text-emerald-800' :
+                                    ord.payment_status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                    'bg-amber-100 text-amber-900'
+                                  }`}>
+                                    {ord.payment_status}
+                                  </span>
+                                </td>
+                                <td className="p-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                    ord.status === 'Delivered' ? 'bg-emerald-100 text-emerald-800' :
+                                    ord.status === 'Cancelled' ? 'bg-red-100 text-red-800' :
+                                    ord.status === 'Preparing' ? 'bg-purple-100 text-purple-800' :
+                                    'bg-amber-100 text-amber-900'
+                                  }`}>
+                                    {ord.status}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-[#8C6D58]">
+                                  {new Date(ord.created_at).toLocaleDateString()}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={9} className="p-8 text-center text-[#8C6D58]">
+                                No orders matching the selected filters.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* PART D: PRODUCT MANAGEMENT TAB */}
+              {activeTab === 'products' && (
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                    <div>
+                      <h3 className="text-xl font-serif font-bold text-[#2A170A]">Sweets & Mithai Inventory</h3>
+                      <p className="text-xs text-[#8C6D58]">
+                        Weights in grams, low-stock thresholds, kilogram/piece selling modes, and live toggles.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingProduct({
+                          name: '',
+                          category: 'Mithai',
+                          sell_mode: 'kg',
+                          price_per_kg: 1600,
+                          stock_grams: 5000,
+                          low_stock_threshold_grams: 500,
+                          is_available: true,
+                          is_featured: false
+                        });
+                        setIsProductModalOpen(true);
+                      }}
+                      className="px-4 py-2.5 bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer transition-all self-start"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add New Sweet</span>
+                    </button>
+                  </div>
+
+                  {/* Product Table */}
+                  <div className="bg-white rounded-3xl border border-[#EAE2D5] overflow-hidden shadow-xs">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-[#FAF7F2] text-[#8C6D58] uppercase tracking-wider border-b border-[#EAE2D5]">
+                          <tr>
+                            <th className="p-3">Thumbnail</th>
+                            <th className="p-3">Sweet Name</th>
+                            <th className="p-3">Category</th>
+                            <th className="p-3">Sell Mode</th>
+                            <th className="p-3">Price</th>
+                            <th className="p-3">Stock (g)</th>
+                            <th className="p-3">Available</th>
+                            <th className="p-3">Featured</th>
+                            <th className="p-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#F2ECE1]">
+                          {products.map(prod => {
+                            const isLow = prod.stock_grams <= (prod.low_stock_threshold_grams || 500);
+                            return (
+                              <tr key={prod.id} className="hover:bg-[#FAF7F2]/50">
+                                <td className="p-3">
+                                  <div className="w-12 h-12 rounded-xl overflow-hidden bg-[#FAF7F2] border border-[#D9C8B4] shrink-0">
+                                    {prod.image ? (
+                                      <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-[10px] text-[#C2410C] font-bold p-1 text-center">
+                                        Mithai
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="p-3">
+                                  <div className="font-bold text-[#2A170A]">{prod.name}</div>
+                                  {prod.name_ur && <span className="text-[11px] text-[#8C6D58] block">{prod.name_ur}</span>}
+                                </td>
+                                <td className="p-3 font-medium">{prod.category}</td>
+                                <td className="p-3 uppercase font-mono font-semibold">{prod.sell_mode}</td>
+                                <td className="p-3 font-mono">
+                                  {prod.sell_mode === 'piece' ? (
+                                    <span>Rs. {prod.price_per_piece} / pc</span>
+                                  ) : prod.sell_mode === 'both' ? (
+                                    <div>
+                                      <span>Rs. {prod.price_per_kg} / kg</span>
+                                      <span className="text-[10px] text-[#8C6D58] block">Rs. {prod.price_per_piece} / pc</span>
+                                    </div>
+                                  ) : (
+                                    <span>Rs. {prod.price_per_kg || prod.price_per_unit} / kg</span>
+                                  )}
+                                </td>
+                                <td className="p-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={`font-mono font-bold ${isLow ? 'text-red-600' : 'text-[#2A170A]'}`}>
+                                      {prod.stock_grams}g
+                                    </span>
+                                    {isLow && (
+                                      <span className="px-1.5 py-0.2 rounded bg-red-100 text-red-700 text-[10px] font-bold">
+                                        LOW
+                                      </span>
+                                    )}
+                                  </div>
+                                  {/* Quick +/- buttons */}
+                                  <div className="flex items-center gap-1 mt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickStockAdjust(prod, -500, 'Sale / Waste')}
+                                      className="px-1.5 py-0.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded text-[10px] font-bold"
+                                      title="Deduct 500g"
+                                    >
+                                      -500g
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickStockAdjust(prod, 1000, 'Batch Restock')}
+                                      className="px-1.5 py-0.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded text-[10px] font-bold"
+                                      title="Add 1000g"
+                                    >
+                                      +1kg
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="p-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={prod.is_available}
+                                    onChange={() => handleToggleProduct(prod, 'is_available')}
+                                    className="rounded text-[#C2410C] focus:ring-[#C2410C] cursor-pointer"
+                                  />
+                                </td>
+                                <td className="p-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={prod.is_featured}
+                                    onChange={() => handleToggleProduct(prod, 'is_featured')}
+                                    className="rounded text-[#C2410C] focus:ring-[#C2410C] cursor-pointer"
+                                  />
+                                </td>
+                                <td className="p-3 text-right space-x-1.5">
+                                  <button
+                                    onClick={() => {
+                                      setEditingProduct(prod);
+                                      setIsProductModalOpen(true);
+                                    }}
+                                    className="p-1.5 text-[#5A4132] hover:bg-[#FAF7F2] rounded-lg"
+                                    title="Edit Sweet"
+                                  >
+                                    <Edit className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteProduct(prod)}
+                                    className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                                    title="Delete Sweet"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* PART E: EVENT INQUIRIES TAB */}
+              {activeTab === 'inquiries' && (
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                    <div>
+                      <h3 className="text-xl font-serif font-bold text-[#2A170A]">Bespoke Event Catering Inquiries</h3>
+                      <p className="text-xs text-[#8C6D58]">
+                        Review bulk requests, prepare cost quotations, and dispatch proposals directly to customer WhatsApp.
+                      </p>
+                    </div>
+
+                    <select
+                      value={inquiryStatusFilter}
+                      onChange={(e) => setInquiryStatusFilter(e.target.value)}
+                      className="px-3 py-2 bg-white rounded-xl border border-[#D9C8B4] text-xs font-semibold self-start"
+                    >
+                      <option value="All">All Inquiries</option>
+                      <option value="New">New</option>
+                      <option value="Quoted">Quoted</option>
+                      <option value="Confirmed">Confirmed</option>
+                      <option value="Cancelled">Cancelled</option>
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {filteredInquiries.length > 0 ? (
+                      filteredInquiries.map(inq => (
+                        <div
+                          key={inq.id}
+                          onClick={() => setSelectedInquiry(inq)}
+                          className="bg-white p-5 rounded-3xl border border-[#EAE2D5] hover:border-[#D9C8B4] hover:shadow-md transition-all cursor-pointer space-y-3 flex flex-col justify-between"
+                        >
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h4 className="font-bold text-[#2A170A] text-sm">{inq.name}</h4>
+                                <span className="text-xs text-[#8C6D58] font-mono">{inq.phone}</span>
+                              </div>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                inq.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-800' :
+                                inq.status === 'Quoted' ? 'bg-blue-100 text-blue-800' :
+                                inq.status === 'Cancelled' ? 'bg-red-100 text-red-800' :
+                                'bg-amber-100 text-amber-900'
+                              }`}>
+                                {inq.status}
+                              </span>
+                            </div>
+
+                            <div className="text-xs text-[#5A4132] space-y-1">
+                              <div>Occasion: <strong>{inq.event_type}</strong></div>
+                              <div>Date: <strong>{inq.event_date}</strong></div>
+                              <div>Estimated Volume: <strong>{inq.estimated_boxes} Boxes</strong></div>
+                            </div>
+
+                            {inq.quote_amount && (
+                              <div className="p-2 bg-[#FAF7F2] rounded-xl text-xs flex justify-between font-bold">
+                                <span>Quoted:</span>
+                                <span className="text-[#C2410C]">Rs. {inq.quote_amount.toLocaleString()}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="pt-2 border-t border-[#F2ECE1] flex justify-between items-center text-xs">
+                            <span className="text-[#8C6D58]">{new Date(inq.created_at).toLocaleDateString()}</span>
+                            <span className="text-[#C2410C] font-semibold">Open Proposal →</span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="col-span-3 p-8 text-center text-xs text-[#8C6D58] bg-white rounded-3xl border border-[#EAE2D5]">
+                        No catering inquiries found for the selected filter.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* PART F: CONTACT MESSAGES TAB */}
+              {activeTab === 'messages' && (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-xl font-serif font-bold text-[#2A170A]">Customer Queries & Feedback</h3>
+                    <p className="text-xs text-[#8C6D58]">
+                      Messages received from the storefront contact form. Open to read and reply on WhatsApp.
+                    </p>
+                  </div>
+
+                  <div className="bg-white rounded-3xl border border-[#EAE2D5] overflow-hidden shadow-xs">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#FAF7F2] text-[#8C6D58] uppercase tracking-wider border-b border-[#EAE2D5]">
+                        <tr>
+                          <th className="p-3">Status</th>
+                          <th className="p-3">Customer</th>
+                          <th className="p-3">Phone</th>
+                          <th className="p-3">Subject</th>
+                          <th className="p-3">Received At</th>
+                          <th className="p-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#F2ECE1]">
+                        {messages.length > 0 ? (
+                          messages.map(msg => {
+                            const isUnread = msg.is_read === false || msg.status === 'Unread';
+                            return (
+                              <tr
+                                key={msg.id}
+                                onClick={async () => {
+                                  setSelectedMessage(msg);
+                                  if (isUnread) {
+                                    await api.markMessageAsRead(msg.id);
+                                    loadAdminData();
+                                  }
+                                }}
+                                className={`hover:bg-[#FAF7F2] cursor-pointer transition-colors ${
+                                  isUnread ? 'bg-amber-50/40 font-bold' : ''
+                                }`}
+                              >
+                                <td className="p-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase ${
+                                    isUnread ? 'bg-amber-500 text-white font-bold' : 'bg-neutral-100 text-neutral-600 font-medium'
+                                  }`}>
+                                    {isUnread ? 'Unread' : 'Read'}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-[#2A170A]">{msg.name}</td>
+                                <td className="p-3 font-mono">{msg.phone}</td>
+                                <td className="p-3 text-[#2A170A]">{msg.subject}</td>
+                                <td className="p-3 text-[#8C6D58]">{new Date(msg.created_at).toLocaleString()}</td>
+                                <td className="p-3 text-right">
+                                  <span className="text-[#C2410C] font-semibold hover:underline">Read Message →</span>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={6} className="p-8 text-center text-[#8C6D58]">
+                              No messages received yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* PART G: REVIEWS TAB */}
+              {activeTab === 'reviews' && (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-xl font-serif font-bold text-[#2A170A]">Review Moderation</h3>
+                    <p className="text-xs text-[#8C6D58]">
+                      Verify genuine reviews before they become visible on the public storefront.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    {reviews.length > 0 ? (
+                      reviews.map(rev => (
+                        <div key={rev.id} className="p-5 bg-white rounded-3xl border border-[#EAE2D5] flex flex-col sm:flex-row justify-between sm:items-center gap-3 text-xs shadow-xs">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-[#2A170A] text-sm">{rev.customer_name}</span>
+                              <span className="text-[#8C6D58]">({rev.city || 'Verified Buyer'})</span>
+                              <span className="text-amber-500 font-bold">★ {rev.rating} / 5</span>
+                            </div>
+                            <p className="text-[#4A3223] italic">"{rev.comment}"</p>
+                            <span className="text-[10px] text-[#8C6D58] block">
+                              Submitted {new Date(rev.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 self-start sm:self-auto">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await api.updateReviewApproval(rev.id, !rev.is_approved);
+                                loadAdminData();
+                              }}
+                              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                                rev.is_approved 
+                                  ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' 
+                                  : 'bg-[#C2410C] hover:bg-[#9A3412] text-white shadow-xs'
+                              }`}
+                            >
+                              {rev.is_approved ? 'Approved (Click to Revoke)' : 'Approve for Storefront'}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (confirm('Delete this review permanently?')) {
+                                  await api.deleteReview(rev.id);
+                                  loadAdminData();
+                                }
+                              }}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-xl cursor-pointer"
+                              title="Delete Review"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="p-8 text-center text-xs text-[#8C6D58] bg-white rounded-3xl border border-[#EAE2D5]">
+                        No customer reviews submitted yet.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* PART H: SETTINGS TAB */}
+              {activeTab === 'settings' && (
+                <SettingsTab
+                  settings={settings}
+                  onRefresh={onRefreshSettings}
+                />
+              )}
+
+              {/* PART I: KITCHEN VIEW TAB */}
+              {activeTab === 'kitchen' && (
+                <KitchenView
+                  orders={orders}
+                  onRefresh={loadAdminData}
+                />
+              )}
+
+              {/* TAB: COUPONS */}
+              {activeTab === 'coupons' && (
+                <div className="space-y-6">
+                  <div className="bg-white p-6 rounded-3xl border border-[#EAE2D5] space-y-4">
+                    <h4 className="text-sm font-serif font-bold text-[#2A170A]">Create Promotional Coupon</h4>
+                    <form onSubmit={handleCreateCoupon} className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <label className="font-semibold text-[#8C6D58] block mb-1">Coupon Code *</label>
+                        <input
+                          type="text"
+                          required
+                          value={newCouponCode}
+                          onChange={(e) => setNewCouponCode(e.target.value)}
+                          placeholder="SWEET2026"
+                          className="w-full px-3 py-2 uppercase bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-semibold text-[#8C6D58] block mb-1">Discount Type</label>
+                        <select
+                          value={newCouponType}
+                          onChange={(e) => setNewCouponType(e.target.value as any)}
+                          className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl font-semibold"
+                        >
+                          <option value="percentage">Percentage (%)</option>
+                          <option value="fixed">Fixed Amount (Rs)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="font-semibold text-[#8C6D58] block mb-1">Value</label>
+                        <input
+                          type="number"
+                          required
+                          value={newCouponValue}
+                          onChange={(e) => setNewCouponValue(Number(e.target.value))}
+                          className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl font-mono"
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <button
+                          type="submit"
+                          className="w-full py-2 bg-[#2A170A] hover:bg-[#C2410C] text-white font-semibold rounded-xl transition-colors cursor-pointer shadow-xs"
+                        >
+                          Create Coupon
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+
+                  <div className="bg-white rounded-3xl border border-[#EAE2D5] overflow-hidden">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#FAF7F2] text-[#8C6D58] uppercase border-b border-[#EAE2D5]">
+                        <tr>
+                          <th className="p-3">Code</th>
+                          <th className="p-3">Type</th>
+                          <th className="p-3">Discount</th>
+                          <th className="p-3">Min Order</th>
+                          <th className="p-3">Status</th>
+                          <th className="p-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#F2ECE1]">
+                        {coupons.map(c => (
+                          <tr key={c.code}>
+                            <td className="p-3 font-mono font-bold text-[#C2410C]">{c.code}</td>
+                            <td className="p-3 capitalize">{c.discount_type}</td>
+                            <td className="p-3 font-bold">
+                              {c.discount_type === 'percentage' ? `${c.discount_value}%` : `Rs. ${c.discount_value}`}
+                            </td>
+                            <td className="p-3 font-mono">Rs. {c.min_order_amount?.toLocaleString() || 0}</td>
+                            <td className="p-3">
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                                Active
+                              </span>
+                            </td>
+                            <td className="p-3 text-right">
+                              <button
+                                onClick={async () => {
+                                  await api.deleteCoupon(c.code);
+                                  loadAdminData();
+                                }}
+                                className="text-red-600 hover:underline cursor-pointer"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: GIFT BOXES */}
+              {activeTab === 'gift_boxes' && (
+                <div className="space-y-4">
+                  <h3 className="text-xl font-serif font-bold text-[#2A170A]">Royal Gift Packaging Boxes</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {giftBoxes.map(box => (
+                      <div key={box.id} className="bg-white p-5 rounded-3xl border border-[#EAE2D5] space-y-3 shadow-xs">
+                        {box.image_path ? (
+                          <img src={box.image_path} alt={box.name_en} className="w-full h-36 object-cover rounded-2xl" />
+                        ) : (
+                          <div className="w-full h-36 rounded-2xl flex items-center justify-center bg-[#FFF8EE] border border-[#F0DCC4]">
+                            <span className="text-[#C2410C] font-semibold text-xs text-center px-2">{box.name_en}</span>
+                          </div>
+                        )}
+                        <div>
+                          <h4 className="text-sm font-serif font-bold text-[#2A170A]">{box.name_en}</h4>
+                          <span className="text-xs text-[#8C6D58]">{box.name_ur}</span>
+                        </div>
+                        <div className="flex justify-between items-center pt-2 border-t border-[#F2ECE1] text-xs">
+                          <span className="text-[#8C6D58]">Capacity: {box.size_grams}g</span>
+                          <span className="font-bold text-[#C2410C]">Rs. {box.box_price.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: SQL SCHEMA SETUP REFERENCE */}
+              {activeTab === 'sql' && (
+                <div className="bg-white p-6 rounded-3xl border border-[#EAE2D5] space-y-4 shadow-xs">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-lg font-serif font-bold text-[#2A170A]">Supabase Schema Upgrade SQL</h3>
+                      <p className="text-xs text-[#8C6D58]">
+                        Exact SQL scripts with RLS security policies, <code>is_admin()</code> function, and storage policies.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(
+                          `-- View /supabase_schema.sql for complete definitions including is_admin() and place_order RPC.`
+                        );
+                        setCopiedSql(true);
+                        setTimeout(() => setCopiedSql(false), 2000);
+                      }}
+                      className="px-4 py-2 bg-[#2A170A] hover:bg-[#C2410C] text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      {copiedSql ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                      <span>{copiedSql ? 'Copied' : 'Copy SQL Notes'}</span>
+                    </button>
+                  </div>
+                  <div className="text-xs text-[#5A4132] bg-[#FAF7F2] p-4 rounded-2xl border border-[#D9C8B4] font-mono leading-relaxed overflow-x-auto">
+                    {`-- To enable is_admin() for your user account:
+INSERT INTO user_roles (user_id, role)
+VALUES ('<YOUR_AUTH_USER_UUID>', 'owner')
+ON CONFLICT (user_id) DO UPDATE SET role = 'owner';`}
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
         )}
       </div>
+
+      {/* Order Detail Modal (Part C) */}
+      {selectedOrder && (
+        <OrderDetailModal
+          order={selectedOrder}
+          onClose={() => setSelectedOrder(null)}
+          onRefresh={loadAdminData}
+          shopName={settings?.shop_name || 'Mithas Sweets'}
+          shopPhone={settings?.phone || '03027628552'}
+        />
+      )}
+
+      {/* Product Form Modal (Part D) */}
+      {isProductModalOpen && (
+        <ProductFormModal
+          product={editingProduct}
+          isOpen={isProductModalOpen}
+          onClose={() => {
+            setIsProductModalOpen(false);
+            setEditingProduct(null);
+          }}
+          onSaved={() => {
+            onRefreshProducts();
+            loadAdminData();
+          }}
+          categories={['Mithai', 'Barfi', 'Laddu', 'Halwa', 'Dry Fruit Sweets', 'Cakes']}
+        />
+      )}
+
+      {/* Event Inquiry Modal (Part E) */}
+      {selectedInquiry && (
+        <InquiryDetailModal
+          inquiry={selectedInquiry}
+          onClose={() => setSelectedInquiry(null)}
+          onRefresh={loadAdminData}
+          shopWhatsapp={settings?.whatsapp || '923027628552'}
+        />
+      )}
+
+      {/* Contact Message Modal (Part F) */}
+      {selectedMessage && (
+        <MessageDetailModal
+          message={selectedMessage}
+          onClose={() => setSelectedMessage(null)}
+          shopWhatsapp={settings?.whatsapp || '923027628552'}
+        />
+      )}
     </div>
   );
 };

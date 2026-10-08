@@ -58,18 +58,24 @@ export const AboutSection: React.FC<AboutSectionProps> = ({ settings }) => {
           </div>
 
           <div className="lg:col-span-5">
-            <div className="rounded-3xl overflow-hidden border border-[#D9C8B4] shadow-xl relative bg-[#2A170A]">
-              <img
-                src="/src/assets/images/mithas_hero_spread_1791385618514.jpg"
-                alt={shopName}
-                className="w-full h-80 sm:h-96 object-cover opacity-90"
-                referrerPolicy="no-referrer"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-6 flex flex-col justify-end text-white">
-                <span className="text-xs uppercase tracking-wider text-amber-300 font-bold">
+            <div className="rounded-3xl overflow-hidden border border-[#D9C8B4] shadow-xl relative bg-white p-3 space-y-3">
+              <div className="relative w-full h-48 sm:h-64 rounded-xl overflow-hidden bg-[#FFF8EE]">
+                <img
+                  src="https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&q=80"
+                  alt={shopName}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    target.onerror = null;
+                    target.src = 'https://picsum.photos/seed/' + Math.random().toString(36).substring(2, 8) + '/400/400';
+                  }}
+                />
+              </div>
+              <div className="p-3 text-center">
+                <span className="text-xs uppercase tracking-wider text-[#C2410C] font-bold block">
                   {shopName}
                 </span>
-                <p className="text-sm sm:text-base font-serif font-bold mt-1">
+                <p className="text-xs text-[#6B5544] mt-1">
                   Freshly Prepared Traditional Sweets for Your Special Occasions
                 </p>
               </div>

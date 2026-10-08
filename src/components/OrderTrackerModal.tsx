@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { X, Search, Package, Clock, CheckCircle2, Truck, AlertCircle, Loader2 } from 'lucide-react';
+import { 
+  X, Search, Package, Clock, CheckCircle2, Truck, AlertCircle, 
+  Loader2, Upload, FileCheck, Phone, FileText 
+} from 'lucide-react';
 import { Order } from '../types';
 import { api } from '../services/api';
+import { useLanguage } from '../context/LanguageContext';
 
 interface OrderTrackerModalProps {
   isOpen: boolean;
@@ -14,22 +18,47 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
   onClose,
   initialOrderNumber
 }) => {
-  if (!isOpen) return null;
+  const { isUrdu, t } = useLanguage();
 
   const [orderQuery, setOrderQuery] = useState(initialOrderNumber || '');
+  const [phoneQuery, setPhoneQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [order, setOrder] = useState<Order | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const fetchOrder = async (num: string) => {
-    if (!num.trim()) return;
+  // Payment proof attachment state
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [uploadingProof, setUploadingProof] = useState(false);
+  const [proofSuccess, setProofSuccess] = useState(false);
+
+  const fetchOrder = async (orderNum: string, phone: string) => {
+    if (!orderNum.trim()) {
+      setErrorMsg(isUrdu ? 'براہ کرم آرڈر نمبر درج کریں' : 'Please enter your order reference number');
+      return;
+    }
+    if (!phone.trim()) {
+      setErrorMsg(isUrdu ? 'براہ کرم اپنا فون نمبر درج کریں' : 'Please enter the phone number used when placing the order');
+      return;
+    }
+
     setLoading(true);
     setErrorMsg(null);
+    setProofSuccess(false);
+
     try {
-      const data = await api.getOrderByNumber(num.trim());
-      setOrder(data);
+      const data = await api.trackOrder(orderNum.trim(), phone.trim());
+      if (data) {
+        setOrder(data);
+      } else {
+        setErrorMsg(
+          isUrdu 
+            ? 'کوئی آرڈر نہیں ملا۔ براہ کرم آرڈر نمبر اور فون نمبر چیک کریں۔'
+            : 'No matching order found. Please ensure both Order Number and Phone match your order receipt.'
+        );
+        setOrder(null);
+      }
     } catch {
-      setErrorMsg('No order found with this reference number. Please check the digits.');
+      setErrorMsg('Failed to look up order. Please verify your details.');
       setOrder(null);
     } finally {
       setLoading(false);
@@ -39,20 +68,41 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
   useEffect(() => {
     if (initialOrderNumber) {
       setOrderQuery(initialOrderNumber);
-      fetchOrder(initialOrderNumber);
     }
   }, [initialOrderNumber]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchOrder(orderQuery);
+    fetchOrder(orderQuery, phoneQuery);
+  };
+
+  const handleUploadPaymentProof = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!proofFile || !order) return;
+
+    setUploadingProof(true);
+    try {
+      const filePath = await api.uploadPaymentProof(order.order_number, proofFile);
+      const success = await api.attachPaymentProof(order.order_number, phoneQuery, filePath);
+      if (success) {
+        setProofSuccess(true);
+        setProofFile(null);
+        // Refresh order details
+        fetchOrder(order.order_number, phoneQuery);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg('Failed to upload proof. Please try again or send on WhatsApp.');
+    } finally {
+      setUploadingProof(false);
+    }
   };
 
   const steps = [
-    { title: 'Order Placed', statusKey: 'New', icon: Package },
-    { title: 'Preparing Fresh', statusKey: 'Preparing', icon: Clock },
-    { title: 'Out for Delivery / Ready', statusKey: 'Out for Delivery', icon: Truck },
-    { title: 'Delivered / Completed', statusKey: 'Delivered', icon: CheckCircle2 },
+    { title: isUrdu ? 'آرڈر موصول ہوا' : 'Order Placed', statusKey: 'New', icon: Package },
+    { title: isUrdu ? 'تازہ تیاری' : 'Order Preparation', statusKey: 'Preparing', icon: Clock },
+    { title: isUrdu ? 'ترسیل کے لیے روانہ' : 'Out for Delivery / Ready', statusKey: 'Out for Delivery', icon: Truck },
+    { title: isUrdu ? 'پہنچ گیا / مکمل' : 'Delivered / Completed', statusKey: 'Delivered', icon: CheckCircle2 },
   ];
 
   const getStepIndex = (status: Order['status']) => {
@@ -66,6 +116,8 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
   };
 
   const currentStep = order ? getStepIndex(order.status) : 0;
+
+  if (!isOpen) return null;
 
   return (
     <div 
@@ -83,112 +135,205 @@ export const OrderTrackerModal: React.FC<OrderTrackerModalProps> = ({
           <X className="w-5 h-5" />
         </button>
 
-        <div>
-          <h2 className="text-xl font-serif font-bold text-[#2A170A]">
-            Track Your Mithai Order
+        {/* Header */}
+        <div className="space-y-1">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-[#8C6D58] rounded-full text-xs font-semibold uppercase tracking-wider">
+            <Search className="w-3.5 h-3.5 text-[#C2410C]" />
+            <span>{isUrdu ? 'لائیو ٹریکنگ' : 'Live Order Tracker'}</span>
+          </div>
+          <h2 className="text-2xl font-serif font-bold text-[#2A170A]">
+            {isUrdu ? 'اپنے آرڈر کی لائیو صورتحال جانیں' : 'Track Your Sweets Order'}
           </h2>
-          <p className="text-xs text-[#6B5544] mt-0.5">
-            Enter your order reference code (e.g. MS-2026-1042) to view live kitchen status.
+          <p className="text-xs text-[#5A4132]">
+            {isUrdu 
+              ? 'اپنے آرڈر کی تصدیق اور لائیو تیاری کی معلومات کے لیے آرڈر نمبر اور فون درج کریں۔'
+              : 'Enter your official order reference (e.g. MS-2026-1024) and phone number to verify status.'}
           </p>
         </div>
 
-        {/* Search Input */}
-        <form onSubmit={handleSearch} className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Enter Order # (e.g. MS-2026-8492)"
-            value={orderQuery}
-            onChange={(e) => setOrderQuery(e.target.value)}
-            className="flex-1 text-xs px-3.5 py-2.5 rounded-xl border border-[#D9C8B4] focus:outline-none focus:ring-2 focus:ring-[#C2410C] font-mono uppercase"
-            required
-          />
+        {/* Search Form with Order Number AND Phone (RPC Security requirement) */}
+        <form onSubmit={handleSearch} className="space-y-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] font-semibold text-[#8C6D58] block mb-1">
+                {isUrdu ? 'آرڈر نمبر' : 'Order Reference Number *'}
+              </label>
+              <input
+                type="text"
+                required
+                value={orderQuery}
+                onChange={(e) => setOrderQuery(e.target.value)}
+                placeholder="MS-2026-XXXX"
+                className="w-full px-3 py-2 text-xs uppercase bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl focus:outline-hidden focus:border-[#C2410C] font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-semibold text-[#8C6D58] block mb-1">
+                {isUrdu ? 'موبائل نمبر' : 'Registered Phone Number *'}
+              </label>
+              <input
+                type="tel"
+                required
+                value={phoneQuery}
+                onChange={(e) => setPhoneQuery(e.target.value)}
+                placeholder="03001234567"
+                className="w-full px-3 py-2 text-xs bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl focus:outline-hidden focus:border-[#C2410C]"
+              />
+            </div>
+          </div>
+
           <button
             type="submit"
             disabled={loading}
-            className="px-4 py-2.5 bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-60"
+            className="w-full py-2.5 bg-[#2A170A] hover:bg-[#C2410C] text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-            <span>Track</span>
+            <span>{isUrdu ? 'آرڈر تلاش کریں' : 'Track Order'}</span>
           </button>
         </form>
 
         {errorMsg && (
-          <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs flex items-center gap-2">
+          <div className="p-3 bg-red-50 text-red-700 text-xs rounded-xl flex items-center gap-2 border border-red-200">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
 
-        {/* Result Tracking Details */}
+        {/* Order Details Output */}
         {order && (
-          <div className="p-5 bg-[#FAF7F2] border border-[#EAE2D5] rounded-2xl space-y-5 animate-in fade-in">
-            <div className="flex items-center justify-between pb-3 border-b border-[#EAE2D5]">
-              <div>
-                <span className="text-[11px] uppercase tracking-wider text-[#8C6D58] font-bold block">
-                  Order Status
+          <div className="space-y-6 pt-2 border-t border-[#EAE2D5] animate-in fade-in">
+            {/* Status Pipeline */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#8C6D58]">
+                  {isUrdu ? 'موجودہ مرحلہ:' : 'Preparation Pipeline:'}
                 </span>
-                <span className="text-base font-bold text-[#C2410C]">
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold">
                   {order.status}
                 </span>
               </div>
-              <div className="text-right">
-                <span className="text-xs font-mono font-bold text-[#2A170A] block">
-                  {order.order_number}
-                </span>
-                <span className="text-[11px] text-[#8C6D58]">
-                  {new Date(order.created_at).toLocaleDateString()}
-                </span>
-              </div>
-            </div>
 
-            {/* Stepper Visualizer */}
-            <div className="space-y-4">
-              {steps.map((st, idx) => {
-                const Icon = st.icon;
-                const isPassed = idx <= currentStep;
-                const isCurrent = idx === currentStep;
+              {/* Step indicator */}
+              <div className="grid grid-cols-4 gap-1 sm:gap-2">
+                {steps.map((st, idx) => {
+                  const Icon = st.icon;
+                  const isDone = idx <= currentStep;
+                  const isCurrent = idx === currentStep;
 
-                return (
-                  <div key={idx} className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border transition-all ${
-                      isCurrent
-                        ? 'bg-[#C2410C] text-white border-[#C2410C] ring-4 ring-[#C2410C]/20'
-                        : isPassed
-                        ? 'bg-emerald-700 text-white border-emerald-700'
-                        : 'bg-white text-gray-400 border-gray-200'
-                    }`}>
-                      <Icon className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1">
-                      <div className={`text-xs font-bold ${isCurrent ? 'text-[#C2410C]' : isPassed ? 'text-[#2A170A]' : 'text-gray-400'}`}>
-                        {st.title}
+                  return (
+                    <div key={idx} className="flex flex-col items-center text-center">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors mb-1 ${
+                        isCurrent
+                          ? 'bg-[#C2410C] text-white ring-2 ring-[#C2410C]/30 shadow-xs'
+                          : isDone
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-[#F2ECE1] text-[#8C6D58]'
+                      }`}>
+                        <Icon className="w-4 h-4" />
                       </div>
-                      {isCurrent && (
-                        <div className="text-[11px] text-[#8C6D58]">
-                          Fresh batch in progress
-                        </div>
-                      )}
+                      <span className={`text-[10px] leading-tight line-clamp-2 ${
+                        isCurrent ? 'font-bold text-[#2A170A]' : 'text-[#8C6D58]'
+                      }`}>
+                        {st.title}
+                      </span>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
 
-            {/* Summary details */}
-            <div className="pt-3 border-t border-[#EAE2D5] text-xs text-[#5A4132] space-y-1">
-              <div className="flex justify-between">
-                <span>Customer:</span>
-                <span className="font-semibold text-[#2A170A]">{order.customer_name}</span>
+            {/* Order Items & Summary */}
+            <div className="p-4 bg-[#FAF7F2] rounded-2xl border border-[#EAE2D5] space-y-2 text-xs">
+              <div className="flex justify-between items-center pb-2 border-b border-[#EAE2D5]">
+                <span className="font-mono font-bold text-[#C2410C]">{order.order_number}</span>
+                <span className="text-[#8C6D58]">{new Date(order.created_at).toLocaleDateString()}</span>
               </div>
-              <div className="flex justify-between">
-                <span>Fulfillment:</span>
-                <span className="font-semibold text-[#2A170A] capitalize">{order.delivery_type}</span>
+
+              <div className="space-y-1 py-1 max-h-36 overflow-y-auto">
+                {order.items.map((it, idx) => (
+                  <div key={idx} className="flex justify-between text-[#5A4132]">
+                    <span>{it.name} × {it.quantity} {it.unit}</span>
+                    <span className="font-semibold">Rs. {it.total.toLocaleString()}</span>
+                  </div>
+                ))}
               </div>
-              <div className="flex justify-between">
-                <span>Total Amount:</span>
-                <span className="font-bold text-[#C2410C] tabular-nums">Rs. {order.total.toLocaleString()}</span>
+
+              <div className="pt-2 border-t border-[#EAE2D5] flex justify-between font-bold text-sm text-[#2A170A]">
+                <span>{isUrdu ? 'کل رقم:' : 'Total Payable:'}</span>
+                <span className="text-[#C2410C]">Rs. {order.total.toLocaleString()}</span>
+              </div>
+
+              <div className="text-[11px] text-[#8C6D58] pt-1">
+                Payment: <strong className="uppercase">{order.payment_method}</strong> ({order.payment_status || 'pending'})
               </div>
             </div>
+
+            {/* Status History Timeline if available */}
+            {order.status_history && order.status_history.length > 0 && (
+              <div className="space-y-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#8C6D58] block">
+                  {isUrdu ? 'آرڈر کی تفصیلی تاریخ:' : 'Activity Timeline:'}
+                </span>
+                <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                  {order.status_history.map((h, i) => (
+                    <div key={i} className="text-xs p-2 bg-[#FAF7F2] rounded-lg border border-[#EAE2D5] flex justify-between items-center">
+                      <div>
+                        <span className="font-bold text-[#2A170A]">{h.status}</span>
+                        {h.note && <span className="text-[#8C6D58] ml-2 text-[11px]">— {h.note}</span>}
+                      </div>
+                      <span className="text-[10px] text-[#8C6D58]">
+                        {new Date(h.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Payment Proof Upload Option for manual methods */}
+            {order.payment_method !== 'cod' && (
+              <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-2.5 text-xs">
+                <div className="flex items-center gap-1.5 font-bold text-[#2A170A]">
+                  <FileText className="w-4 h-4 text-[#C2410C]" />
+                  <span>{isUrdu ? 'ادائیگی کا ثبوت / رسید' : 'Payment Proof Verification'}</span>
+                </div>
+
+                {order.payment_proof_path ? (
+                  <div className="flex items-center gap-2 text-emerald-800 bg-emerald-50 p-2 rounded-xl border border-emerald-200">
+                    <FileCheck className="w-4 h-4 text-emerald-600" />
+                    <span>Receipt screenshot uploaded and under verification by accounts team.</span>
+                  </div>
+                ) : (
+                  <form onSubmit={handleUploadPaymentProof} className="space-y-2">
+                    <p className="text-[11px] text-[#5A4132]">
+                      Upload your bank/JazzCash/EasyPaisa transfer screenshot to expedite order dispatch:
+                    </p>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      required
+                      onChange={(e) => setProofFile(e.target.files?.[0] || null)}
+                      className="text-xs text-[#5A4132] file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#2A170A] file:text-white hover:file:bg-[#C2410C]"
+                    />
+                    <button
+                      type="submit"
+                      disabled={uploadingProof || !proofFile}
+                      className="w-full py-2 bg-[#C2410C] hover:bg-[#9A3412] text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                    >
+                      {uploadingProof ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                      <span>Upload Payment Screenshot</span>
+                    </button>
+                  </form>
+                )}
+
+                {proofSuccess && (
+                  <p className="text-[11px] text-emerald-700 font-semibold">
+                    Screenshot uploaded successfully!
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
