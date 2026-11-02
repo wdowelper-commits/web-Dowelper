@@ -112,9 +112,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     } catch {}
   };
 
-  // Check auth session & call is_admin() RPC
+  // Check auth session & call is_admin() RPC or verify admin session
   const verifyAdminAuth = async () => {
     try {
+      if (sessionStorage.getItem('mithas_admin_auth') === 'true') {
+        setIsAuthenticated(true);
+        return true;
+      }
+
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData.session) {
         setIsAuthenticated(false);
@@ -187,11 +192,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const loadAdminData = async () => {
     setLoadingData(true);
     try {
-      // Protect query with session verification
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) {
-        setIsAuthenticated(false);
-        return;
+      const isLocalAdmin = sessionStorage.getItem('mithas_admin_auth') === 'true';
+      if (!isLocalAdmin) {
+        // Protect query with session verification
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!sessionData.session) {
+          setIsAuthenticated(false);
+          return;
+        }
       }
 
       const [ords, inqs, msgs, revs, coups, boxes] = await Promise.all([
@@ -219,20 +227,46 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     }
   };
 
-  // Handle Login with is_admin() verification
+  // Handle Login with designated credentials (Username: admin, Code: admin123@) or Supabase Auth
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true);
     setAuthError(null);
 
+    const inputUser = authEmail.trim();
+    const inputPass = authPassword.trim();
+
+    // Check designated admin credentials:
+    // Username: admin (or admin@mithassweets.com)
+    // Code/Password: admin123@
+    const isDirectMatch = 
+      (inputUser.toLowerCase() === 'admin' || inputUser.toLowerCase() === 'admin@mithassweets.com') &&
+      inputPass === 'admin123@';
+
+    if (isDirectMatch) {
+      sessionStorage.setItem('mithas_admin_auth', 'true');
+      setIsAuthenticated(true);
+      // Attempt background Supabase auth if user exists in Supabase
+      try {
+        await supabase.auth.signInWithPassword({
+          email: 'admin@mithassweets.com',
+          password: 'admin123@'
+        });
+      } catch {}
+      await loadAdminData();
+      setAuthLoading(false);
+      return;
+    }
+
     try {
+      const emailToUse = inputUser.includes('@') ? inputUser : `${inputUser}@mithassweets.com`;
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: authEmail.trim(),
-        password: authPassword
+        email: emailToUse,
+        password: inputPass
       });
 
       if (error) {
-        throw new Error(error.message || 'Invalid credentials');
+        throw new Error('Invalid credentials. Use Username: admin and Code: admin123@');
       }
 
       // Call is_admin() RPC
@@ -244,17 +278,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         return;
       }
 
+      sessionStorage.setItem('mithas_admin_auth', 'true');
       setIsAuthenticated(true);
       await loadAdminData();
     } catch (err: any) {
-      setAuthError(err.message || 'Authentication failed. Please check credentials.');
+      setAuthError(err.message || 'Invalid username or code. Use Username: admin and Code: admin123@');
     } finally {
       setAuthLoading(false);
     }
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    sessionStorage.removeItem('mithas_admin_auth');
+    try {
+      await supabase.auth.signOut();
+    } catch {}
     setIsAuthenticated(false);
     setOrders([]);
   };
@@ -487,38 +525,67 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           <div className="flex-1 flex items-center justify-center p-6 bg-[#FAF7F2]">
             <div className="bg-white p-8 rounded-3xl max-w-md w-full shadow-2xl border border-[#D9C8B4] space-y-6">
               <div className="text-center space-y-2">
-                <div className="w-14 h-14 bg-amber-50 text-[#C2410C] rounded-2xl flex items-center justify-center mx-auto border border-amber-200">
+                <div className="w-14 h-14 bg-amber-50 text-[#C2410C] rounded-2xl flex items-center justify-center mx-auto border border-amber-200 shadow-xs">
                   <Lock className="w-7 h-7" />
                 </div>
-                <h3 className="text-2xl font-serif font-bold text-[#2A170A]">Admin Authentication</h3>
+                <h3 className="text-2xl font-serif font-bold text-[#2A170A]">Admin Portal Login</h3>
                 <p className="text-xs text-[#6B5544]">
-                  Sign in with authorized owner credentials. Role is validated against the Supabase database via the <code>is_admin()</code> function.
+                  Sign in with your admin credentials to manage orders, catalog, stock, and settings.
                 </p>
               </div>
 
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
-                  <label className="text-xs font-semibold text-[#8C6D58] block mb-1">Email Address</label>
+                  <label className="text-xs font-semibold text-[#8C6D58] block mb-1">
+                    Username / یوزر نیم
+                  </label>
                   <input
-                    type="email"
+                    type="text"
                     required
                     value={authEmail}
                     onChange={(e) => setAuthEmail(e.target.value)}
-                    placeholder="owner@mithassweets.com"
+                    placeholder="admin"
+                    autoComplete="username"
                     className="w-full px-3.5 py-2.5 text-xs bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl focus:outline-none focus:border-[#C2410C]"
                   />
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold text-[#8C6D58] block mb-1">Password</label>
+                  <label className="text-xs font-semibold text-[#8C6D58] block mb-1">
+                    Code / Password / کوڈ یا پاس ورڈ
+                  </label>
                   <input
                     type="password"
                     required
                     value={authPassword}
                     onChange={(e) => setAuthPassword(e.target.value)}
                     placeholder="••••••••••••"
+                    autoComplete="current-password"
                     className="w-full px-3.5 py-2.5 text-xs bg-[#FAF7F2] border border-[#D9C8B4] rounded-xl focus:outline-none focus:border-[#C2410C]"
                   />
+                </div>
+
+                {/* Quick Credentials Info Box */}
+                <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-[#8C6D58] text-[11px] uppercase tracking-wider">
+                      Admin Credentials
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthEmail('admin');
+                        setAuthPassword('admin123@');
+                      }}
+                      className="text-[11px] font-bold text-[#C2410C] hover:text-[#9A3412] hover:underline cursor-pointer"
+                    >
+                      Click to Auto-fill
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-[#5A4132] font-mono flex items-center justify-between bg-white/70 px-2.5 py-1.5 rounded-lg border border-amber-100">
+                    <span>User: <strong className="text-[#2A170A]">admin</strong></span>
+                    <span>Code: <strong className="text-[#2A170A]">admin123@</strong></span>
+                  </div>
                 </div>
 
                 {authError && (
