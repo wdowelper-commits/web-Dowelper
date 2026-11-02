@@ -19,11 +19,28 @@ export const Hero: React.FC<HeroProps> = ({
 
   return (
     <section className="relative overflow-hidden bg-[#FAF7F2] border-b border-[#EAE2D5]">
-      {/* Subtle warm decorative glow */}
-      <div className="absolute top-0 right-0 -mr-24 -mt-24 w-96 h-96 rounded-full bg-amber-200/30 blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 left-0 -ml-24 -mb-24 w-96 h-96 rounded-full bg-orange-200/20 blur-3xl pointer-events-none" />
+      {/* Background Sweets Photography with warm readability overlay */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
+        <img
+          src="https://images.unsplash.com/photo-1574085733277-851d9d856a3a?w=1920&q=80"
+          alt="Traditional Pakistani Sweets Background"
+          className="w-full h-full object-cover object-center opacity-30"
+          onError={(e) => {
+            const target = e.currentTarget;
+            if (target.src.includes('photo-1574085733277-851d9d856a3a')) {
+              target.src = 'https://images.unsplash.com/photo-1606914501449-5a96b6ce24ca?w=1920&q=80';
+            }
+          }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#FAF7F2] via-[#FAF7F2]/80 to-[#FAF7F2]/45" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#FAF7F2]/70 via-transparent to-[#FAF7F2]" />
+      </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-20">
+      {/* Subtle warm decorative glow */}
+      <div className="absolute top-0 right-0 -mr-24 -mt-24 w-96 h-96 rounded-full bg-amber-200/20 blur-3xl pointer-events-none z-0" />
+      <div className="absolute bottom-0 left-0 -ml-24 -mb-24 w-96 h-96 rounded-full bg-orange-200/15 blur-3xl pointer-events-none z-0" />
+
+      <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-20">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           {/* Left Column: Editorial & Conversion */}
           <div className="lg:col-span-7 space-y-6">
